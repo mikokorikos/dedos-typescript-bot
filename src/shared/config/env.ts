@@ -38,6 +38,14 @@ export const EnvSchema = z.object({
     .regex(/^\d{17,20}$/u, 'DISCORD_GUILD_ID debe ser un snowflake de Discord')
     .optional(),
   DATABASE_URL: z.string().url('DATABASE_URL debe ser una URL válida'),
+  MIDDLEMAN_CATEGORY_ID: z
+    .string()
+    .regex(/^\d{17,20}$/u, 'MIDDLEMAN_CATEGORY_ID debe ser un snowflake de Discord')
+    .optional(),
+  REVIEW_CHANNEL_ID: z
+    .string()
+    .regex(/^\d{17,20}$/u, 'REVIEW_CHANNEL_ID debe ser un snowflake de Discord')
+    .optional(),
   REDIS_URL: optionalUrl.optional(),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
