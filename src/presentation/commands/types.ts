@@ -4,6 +4,7 @@
 
 import type {
   ChatInputCommandInteraction,
+  Message,
   SlashCommandBuilder,
   SlashCommandSubcommandsOnlyBuilder,
 } from 'discord.js';
@@ -25,8 +26,15 @@ export interface CommandMeta {
   readonly cooldownKey?: CommandCooldownKey;
 }
 
+export interface PrefixCommand {
+  readonly name: string;
+  readonly aliases?: ReadonlyArray<string>;
+  readonly execute: (message: Message, args: ReadonlyArray<string>) => Promise<void>;
+}
+
 export interface Command extends CommandMeta {
   readonly data: SlashBuilder;
   readonly execute: (interaction: ChatInputCommandInteraction) => Promise<void>;
   readonly guildIds?: ReadonlyArray<string>;
+  readonly prefix?: PrefixCommand;
 }

@@ -37,6 +37,12 @@ export const EnvSchema = z.object({
     .string()
     .regex(/^\d{17,20}$/u, 'DISCORD_GUILD_ID debe ser un snowflake de Discord')
     .optional(),
+  COMMAND_PREFIX: z
+    .string()
+    .min(1, 'COMMAND_PREFIX es obligatorio')
+    .max(5, 'COMMAND_PREFIX debe tener máximo 5 caracteres')
+    .optional()
+    .default(';'),
   DATABASE_URL: z.string().url('DATABASE_URL debe ser una URL válida'),
   MIDDLEMAN_CATEGORY_ID: z
     .string()

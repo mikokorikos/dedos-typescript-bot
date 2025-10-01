@@ -38,6 +38,7 @@ Campos obligatorios:
 
 Campos opcionales:
 - `DISCORD_GUILD_ID` para registrar comandos sólo en una guild durante desarrollo
+- `COMMAND_PREFIX` para personalizar el prefijo de comandos de texto (por defecto `;`)
 - `REDIS_URL` si activas caché o colas
 - `SENTRY_DSN` y `OTEL_EXPORTER_OTLP_ENDPOINT` para observabilidad futura
 
