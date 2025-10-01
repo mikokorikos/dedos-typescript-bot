@@ -12,6 +12,7 @@ import {
 
 import type { OpenMiddlemanChannelUseCase } from '@/application/usecases/middleman/OpenMiddlemanChannelUseCase';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
+import { env } from '@/shared/config/env';
 import { mapErrorToDiscordResponse } from '@/shared/errors/discord-error-mapper';
 import { logger } from '@/shared/logger/pino';
 
@@ -40,7 +41,7 @@ export class MiddlemanModal {
             .setCustomId(PARTNER_ID)
             .setLabel('Compañero (mención o ID)')
             .setStyle(TextInputStyle.Short)
-            .setRequired(false)
+            .setRequired(true)
             .setMaxLength(100),
         ),
         new ActionRowBuilder<TextInputBuilder>().addComponents(
@@ -72,8 +73,22 @@ export class MiddlemanModal {
     }
 
     const context = interaction.fields.getTextInputValue(CONTEXT_ID);
-    const partnerTag = interaction.fields.getTextInputValue(PARTNER_ID) || undefined;
+    const partnerTag = interaction.fields.getTextInputValue(PARTNER_ID);
     const robloxUsername = interaction.fields.getTextInputValue(ROBLOX_ID) || undefined;
+
+    if (!env.MIDDLEMAN_CATEGORY_ID) {
+      await interaction.reply({
+        embeds: [
+          embedFactory.error({
+            title: 'Configuración incompleta',
+            description:
+              'El bot no tiene configurada la categoría de middleman. Un administrador debe definir `MIDDLEMAN_CATEGORY_ID` en el archivo .env.',
+          }),
+        ],
+        ephemeral: true,
+      });
+      return;
+    }
 
     await interaction.deferReply({ ephemeral: true });
 
@@ -85,6 +100,7 @@ export class MiddlemanModal {
           type: 'MM',
           context,
           partnerTag,
+          categoryId: env.MIDDLEMAN_CATEGORY_ID,
           robloxUsername,
         },
         interaction.guild,
