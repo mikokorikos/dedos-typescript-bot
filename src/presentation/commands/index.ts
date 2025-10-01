@@ -2,7 +2,13 @@
 // RUTA: src/presentation/commands/index.ts
 // ============================================================================
 
-import { commandRegistry, getRegisteredCommands, registerCommands, serializeCommands } from '@/presentation/commands/command-registry';
+import {
+  commandRegistry,
+  getRegisteredCommands,
+  prefixCommandRegistry,
+  registerCommands,
+  serializeCommands,
+} from '@/presentation/commands/command-registry';
 import { helpCommand } from '@/presentation/commands/general/help';
 import { pingCommand } from '@/presentation/commands/general/ping';
 import { middlemanCommand } from '@/presentation/commands/middleman/middleman';
@@ -12,4 +18,4 @@ const commands: Command[] = [pingCommand, helpCommand, middlemanCommand];
 
 registerCommands(commands);
 
-export { commandRegistry, getRegisteredCommands, serializeCommands };
+export { commandRegistry, getRegisteredCommands, prefixCommandRegistry, serializeCommands };

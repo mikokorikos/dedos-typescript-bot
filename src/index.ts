@@ -15,7 +15,7 @@ import { env } from '@/shared/config/env';
 import { logger } from '@/shared/logger/pino';
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds],
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
 });
 
 const registerEvent = (descriptor: AnyEventDescriptor): void => {
