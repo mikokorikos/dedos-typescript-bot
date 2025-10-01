@@ -30,4 +30,5 @@ export interface ITicketRepository extends Transactional<ITicketRepository> {
   delete(id: number): Promise<void>;
   countOpenByOwner(ownerId: bigint): Promise<number>;
   isParticipant(ticketId: number, userId: bigint): Promise<boolean>;
+  listParticipants(ticketId: number): Promise<readonly TicketParticipantInput[]>;
 }

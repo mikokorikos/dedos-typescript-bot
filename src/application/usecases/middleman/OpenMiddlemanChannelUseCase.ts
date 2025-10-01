@@ -15,11 +15,16 @@ import {
   ChannelCleanupError,
   ChannelCreationError,
   TooManyOpenTicketsError,
+  ValidationFailedError,
 } from '@/shared/errors/domain.errors';
 import { sanitizeChannelName } from '@/shared/utils/discord.utils';
 
 const MAX_OPEN_TICKETS = 3;
 const SNOWFLAKE_EXTRACTOR = /\d{17,20}/u;
+
+interface TransactionProvider {
+  $transaction<T>(fn: (context: unknown) => Promise<T>): Promise<T>;
+}
 
 const extractSnowflake = (value?: string): bigint | undefined => {
   if (!value) {
@@ -37,6 +42,7 @@ const extractSnowflake = (value?: string): bigint | undefined => {
 export class OpenMiddlemanChannelUseCase {
   public constructor(
     private readonly ticketRepo: ITicketRepository,
+    private readonly transactions: TransactionProvider,
     private readonly logger: Logger,
     private readonly embeds: EmbedFactory = embedFactory,
   ) {}
@@ -64,12 +70,21 @@ export class OpenMiddlemanChannelUseCase {
 
     this.logger.debug({ channelName, guildId: payload.guildId }, 'Creando canal de middleman.');
 
+    const partnerId = extractSnowflake(payload.partnerTag);
+
+    if (!partnerId) {
+      throw new ValidationFailedError({
+        partnerTag: 'Debes mencionar o introducir el ID de la persona con la que harás el trade.',
+      });
+    }
+
     let createdChannel: TextChannel;
     try {
       createdChannel = await guild.channels.create({
         name: channelName,
         type: ChannelType.GuildText,
         topic: payload.context.slice(0, 1000),
+        parent: payload.categoryId,
         permissionOverwrites: [
           {
             id: guild.roles.everyone.id,
@@ -77,6 +92,14 @@ export class OpenMiddlemanChannelUseCase {
           },
           {
             id: payload.userId,
+            allow: [
+              PermissionFlagsBits.ViewChannel,
+              PermissionFlagsBits.SendMessages,
+              PermissionFlagsBits.ReadMessageHistory,
+            ],
+          },
+          {
+            id: partnerId.toString(),
             allow: [
               PermissionFlagsBits.ViewChannel,
               PermissionFlagsBits.SendMessages,
@@ -101,20 +124,20 @@ export class OpenMiddlemanChannelUseCase {
 
     const participants: TicketParticipantInput[] = [
       { userId: ownerId, role: 'OWNER' },
+      { userId: partnerId, role: 'PARTNER' },
     ];
 
-    const partnerId = extractSnowflake(payload.partnerTag);
-    if (partnerId) {
-      participants.push({ userId: partnerId, role: 'PARTNER' });
-    }
-
     try {
-      const ticket = await this.ticketRepo.create({
-        guildId,
-        channelId: BigInt(createdChannel.id),
-        ownerId,
-        type: TicketType.MM,
-        participants,
+      const ticket = await this.transactions.$transaction(async (tx) => {
+        const transactionalRepo = this.ticketRepo.withTransaction(tx);
+
+        return transactionalRepo.create({
+          guildId,
+          channelId: BigInt(createdChannel.id),
+          ownerId,
+          type: TicketType.MM,
+          participants,
+        });
       });
 
       const embed = this.embeds.ticketCreated({
@@ -125,7 +148,7 @@ export class OpenMiddlemanChannelUseCase {
       });
 
       await createdChannel.send({
-        content: `<@${payload.userId}>` + (partnerId ? ` <@${partnerId}>` : ''),
+        content: `<@${payload.userId}> <@${partnerId}>`,
         embeds: [embed],
       });
 

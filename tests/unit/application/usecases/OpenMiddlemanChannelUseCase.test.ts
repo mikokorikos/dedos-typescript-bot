@@ -100,6 +100,7 @@ describe('OpenMiddlemanChannelUseCase', () => {
   let logger: Logger;
   let guild: Guild;
   let channel: TextChannel & { delete: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
+  let transactions: { $transaction: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     repo = new MockTicketRepository();
@@ -111,7 +112,10 @@ describe('OpenMiddlemanChannelUseCase', () => {
       toString: vi.fn().mockReturnValue('<#999>'),
     } as unknown as TextChannel & { delete: ReturnType<typeof vi.fn>; send: ReturnType<typeof vi.fn> };
     guild = createMockGuild(channel);
-    useCase = new OpenMiddlemanChannelUseCase(repo, logger, embedFactory);
+    transactions = {
+      $transaction: vi.fn(async (fn: (context: unknown) => Promise<unknown>) => fn({})),
+    };
+    useCase = new OpenMiddlemanChannelUseCase(repo, transactions, logger, embedFactory);
   });
 
   it('should create ticket and channel successfully', async () => {
@@ -121,6 +125,8 @@ describe('OpenMiddlemanChannelUseCase', () => {
         guildId: '456',
         type: 'MM',
         context: 'Un contexto suficientemente largo para crear ticket.',
+        partnerTag: '<@123456789012345678>',
+        categoryId: '999999999999999999',
       },
       guild,
     );
@@ -129,6 +135,14 @@ describe('OpenMiddlemanChannelUseCase', () => {
     expect(result.channel).toBe(channel);
     expect(repo.createCalled).toBe(true);
     expect(channel.send).toHaveBeenCalled();
+    expect(transactions.$transaction).toHaveBeenCalled();
+    const createArgs = (guild.channels.create as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(createArgs.permissionOverwrites).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: '123' }),
+        expect.objectContaining({ id: '123456789012345678' }),
+      ]),
+    );
   });
 
   it('should throw error if user has too many open tickets', async () => {
@@ -141,6 +155,8 @@ describe('OpenMiddlemanChannelUseCase', () => {
           guildId: '456',
           type: 'MM',
           context: 'Un contexto suficientemente largo para crear ticket.',
+          partnerTag: '<@123456789012345678>',
+          categoryId: '999999999999999999',
         },
         guild,
       ),
@@ -157,6 +173,8 @@ describe('OpenMiddlemanChannelUseCase', () => {
           guildId: '456',
           type: 'MM',
           context: 'Un contexto suficientemente largo para crear ticket.',
+          partnerTag: '<@123456789012345678>',
+          categoryId: '999999999999999999',
         },
         guild,
       ),

@@ -9,7 +9,10 @@ export const CreateMiddlemanTicketSchema = z.object({
   guildId: z.string().regex(/^\d+$/u, 'Invalid guild ID'),
   type: z.literal('MM'),
   context: z.string().min(10).max(1000, 'Context must be 10-1000 chars'),
-  partnerTag: z.string().optional(),
+  partnerTag: z
+    .string()
+    .regex(/\d{17,20}/u, 'Debe proporcionar la mención o ID del compañero'),
+  categoryId: z.string().regex(/^\d+$/u, 'Invalid category ID'),
   robloxUsername: z.string().min(3).max(50).optional(),
 });
 

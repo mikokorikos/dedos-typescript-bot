@@ -36,6 +36,15 @@ interface ReviewRequestData {
   readonly tradeSummary: string;
 }
 
+interface ReviewPublishedData {
+  readonly ticketId: number;
+  readonly middlemanTag: string;
+  readonly reviewerTag: string;
+  readonly rating: number;
+  readonly comment: string | null;
+  readonly averageRating: number;
+}
+
 interface StatsEmbedData {
   readonly title: string;
   readonly stats: Record<string, string | number>;
@@ -117,6 +126,40 @@ export class EmbedFactory {
       title: 'Cuéntanos tu experiencia',
       description: data.tradeSummary,
       fields: [{ name: 'Middleman', value: clampEmbedField(data.middlemanTag), inline: true }],
+    });
+  }
+
+  public reviewPublished(data: ReviewPublishedData): EmbedBuilder {
+    const fullStars = '⭐'.repeat(data.rating);
+    const emptyStars = '☆'.repeat(Math.max(0, 5 - data.rating));
+    const formattedAverage = data.averageRating.toFixed(2);
+
+    const commentBlock = data.comment
+      ? `\n\n${truncateText(data.comment, EMBED_LIMITS.description)}`
+      : '';
+
+    return this.base({
+      color: COLORS.success,
+      title: `Nueva reseña para ${data.middlemanTag}`,
+      description: `${fullStars}${emptyStars}${commentBlock}`,
+      fields: [
+        {
+          name: 'Ticket',
+          value: clampEmbedField(`#${data.ticketId}`),
+          inline: true,
+        },
+        {
+          name: 'Autor',
+          value: clampEmbedField(data.reviewerTag),
+          inline: true,
+        },
+        {
+          name: 'Promedio actualizado',
+          value: clampEmbedField(`${formattedAverage} ⭐`),
+          inline: true,
+        },
+      ],
+      footer: data.comment ? undefined : 'Sin comentarios adicionales.',
     });
   }
 

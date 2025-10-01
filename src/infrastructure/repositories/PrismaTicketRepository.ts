@@ -129,6 +129,18 @@ export class PrismaTicketRepository implements ITicketRepository {
     return participant !== null;
   }
 
+  public async listParticipants(ticketId: number): Promise<readonly TicketParticipantInput[]> {
+    const participants = await this.prisma.ticketParticipant.findMany({
+      where: { ticketId },
+    });
+
+    return participants.map((participant) => ({
+      userId: participant.userId,
+      role: participant.role,
+      joinedAt: participant.joinedAt,
+    }));
+  }
+
   private toDomain(ticket: PrismaTicketWithRelations): Ticket {
     return new Ticket(
       ticket.id,
