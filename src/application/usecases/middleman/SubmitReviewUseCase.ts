@@ -13,9 +13,9 @@ import type { EmbedFactory } from '@/presentation/embeds/EmbedFactory';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import {
   DuplicateReviewError,
-  TicketClosedError,
   TicketNotFoundError,
   UnauthorizedActionError,
+  ValidationFailedError,
 } from '@/shared/errors/domain.errors';
 
 export class SubmitReviewUseCase {
@@ -35,7 +35,7 @@ export class SubmitReviewUseCase {
     }
 
     if (!ticket.isClosed()) {
-      throw new TicketClosedError(ticket.id);
+      throw new ValidationFailedError({ ticketId: 'El ticket debe estar cerrado antes de enviar una reseña.' });
     }
 
     const reviewerId = BigInt(payload.reviewerId);
@@ -51,6 +51,12 @@ export class SubmitReviewUseCase {
       throw new DuplicateReviewError(String(ticket.id), payload.reviewerId);
     }
 
+    const trimmedComment = payload.comment?.trim() ?? null;
+
+    if (trimmedComment && trimmedComment.length > 500) {
+      throw new ValidationFailedError({ comment: 'El comentario no puede superar los 500 caracteres.' });
+    }
+
     const ratingResult = Rating.create(payload.rating);
     if (ratingResult.isErr()) {
       throw ratingResult.unwrapErr();
@@ -61,16 +67,20 @@ export class SubmitReviewUseCase {
       reviewerId,
       middlemanId,
       rating: ratingResult.unwrap(),
-      comment: payload.comment ?? null,
+      comment: trimmedComment,
     });
+
+    const averageRating = await this.reviewRepo.calculateAverageRating(middlemanId);
 
     await reviewsChannel.send({
       embeds: [
-        this.embeds.success({
-          title: 'Nueva reseña recibida',
-          description: `Ticket #${ticket.id}\nPuntuación: **${review.rating.getValue()}⭐**\nComentario: ${
-            review.comment ?? 'Sin comentario'
-          }`,
+        this.embeds.reviewPublished({
+          ticketId: ticket.id,
+          middlemanTag: `<@${payload.middlemanId}>`,
+          reviewerTag: `<@${payload.reviewerId}>`,
+          rating: review.rating.getValue(),
+          comment: trimmedComment,
+          averageRating,
         }),
       ],
     });
