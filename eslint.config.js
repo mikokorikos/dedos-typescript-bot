@@ -10,7 +10,15 @@ export default [
   {
     ignores: ['dist/**', 'node_modules/**', '.eslintrc.cjs'],
   },
-  js.configs.recommended,
+  {
+    ...js.configs.recommended,
+    languageOptions: {
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+      },
+    },
+  },
   {
     files: ['**/*.ts'],
     languageOptions: {
