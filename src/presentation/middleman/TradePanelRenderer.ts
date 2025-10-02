@@ -2,7 +2,7 @@
 // RUTA: src/presentation/middleman/TradePanelRenderer.ts
 // ============================================================================
 
-import type { TextChannel } from 'discord.js';
+import type { MessageCreateOptions, MessageEditOptions, TextChannel } from 'discord.js';
 import type { Logger } from 'pino';
 
 import { tradePanelStore } from '@/application/services/TradePanelStore';
@@ -90,10 +90,16 @@ export class TradePanelRenderer {
 
     const canConfirm = Boolean(ownerTrade && partnerTrade && !everyoneConfirmed);
 
-    const payload: Parameters<TextChannel['send']>[0] = {
+    const sendPayload: MessageCreateOptions = {
       embeds: [embed],
       components: [buildTradePanelButtons({ canConfirm })],
       allowedMentions: { parse: [] },
+    };
+
+    const editPayload: MessageEditOptions = {
+      embeds: sendPayload.embeds,
+      components: sendPayload.components,
+      allowedMentions: sendPayload.allowedMentions,
     };
 
     const storedMessageId = tradePanelStore.get(channel.id);
@@ -101,7 +107,7 @@ export class TradePanelRenderer {
     if (storedMessageId) {
       try {
         const message = await channel.messages.fetch(storedMessageId);
-        await message.edit(payload);
+        await message.edit(editPayload);
         return;
       } catch (error) {
         this.logger.warn(
@@ -112,7 +118,7 @@ export class TradePanelRenderer {
       }
     }
 
-    const message = await channel.send(payload);
+    const message = await channel.send(sendPayload);
     tradePanelStore.set(channel.id, message.id);
   }
 }
