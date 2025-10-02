@@ -28,19 +28,40 @@ const optionalUrl = z
   .or(z.literal(''))
   .transform((value) => (value === '' ? undefined : value));
 
+
+const snowflakePattern = /^\d{17,20}$/u;
+
 const commaSeparatedSnowflakes = z
-  .string()
-  .optional()
-  .transform((value) => {
-    if (!value) {
-      return [] as string[];
+  .preprocess((raw) => {
+    const segments: string[] = [];
+
+    const pushSegment = (segment: unknown) => {
+      if (segment === undefined || segment === null) {
+        return;
+      }
+
+      const text = typeof segment === 'string' ? segment : String(segment);
+
+      text
+        .split(',')
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+        .forEach((value) => {
+          if (snowflakePattern.test(value)) {
+            segments.push(value);
+          }
+        });
+    };
+
+    if (Array.isArray(raw)) {
+      raw.forEach(pushSegment);
+    } else {
+      pushSegment(raw);
     }
 
-    return value
-      .split(',')
-      .map((segment) => segment.trim())
-      .filter((segment) => /^\d{17,20}$/u.test(segment));
-  });
+    return segments;
+  }, z.array(z.string().regex(snowflakePattern)));
+
 
 export const EnvSchema = z.object({
   DISCORD_TOKEN: z.string().min(1, 'DISCORD_TOKEN es obligatorio'),
@@ -74,7 +95,9 @@ export const EnvSchema = z.object({
     .string()
     .regex(/^\d{17,20}$/u, 'TICKET_CATEGORY_ID debe ser un snowflake de Discord')
     .optional(),
-  TICKET_STAFF_ROLE_IDS: commaSeparatedSnowflakes.default([] as string[]),
+
+  TICKET_STAFF_ROLE_IDS: commaSeparatedSnowflakes.default([]),
+
   TICKET_MAX_PER_USER: z.coerce.number().int().min(1).max(10).default(3),
   TICKET_COOLDOWN_MS: z.coerce.number().int().min(0).default(60_000),
   REDIS_URL: optionalUrl.optional(),
