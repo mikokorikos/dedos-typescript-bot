@@ -5,7 +5,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { InteractionReplyOptions } from 'discord.js';
-import { EmbedBuilder } from 'discord.js';
+import { EmbedBuilder, MessageFlags } from 'discord.js';
 
 import { COLORS, EMBED_LIMITS } from '@/shared/config/constants';
 import type { DedosError } from '@/shared/errors/base.error';
@@ -49,7 +49,7 @@ export const mapErrorToDiscordResponse = (error: unknown): DiscordErrorResponse 
 
   return {
     embeds: [buildErrorEmbed('Ha ocurrido un problema', description, referenceId)],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
     shouldLogStack,
     referenceId,
   };

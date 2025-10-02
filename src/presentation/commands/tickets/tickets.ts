@@ -6,6 +6,7 @@ import {
   ChannelType,
   type ChatInputCommandInteraction,
   type GuildMember,
+  MessageFlags,
   SlashCommandBuilder,
 } from 'discord.js';
 
@@ -60,7 +61,7 @@ registerSelectMenuHandler(TICKET_PANEL_MENU_ID, async (interaction) => {
           description: 'Este menú solo puede usarse dentro de un servidor de Discord.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -75,7 +76,7 @@ registerSelectMenuHandler(TICKET_PANEL_MENU_ID, async (interaction) => {
 
     const member = ensureGuildMember(interaction.member);
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     const { ticket, channel } = await supportTicketUseCase.execute({
       guild: interaction.guild,
@@ -101,7 +102,7 @@ registerSelectMenuHandler(TICKET_PANEL_MENU_ID, async (interaction) => {
     }
 
     if (interaction.deferred || interaction.replied) {
-      const { ephemeral, flags, ...editPayload } = payload;
+      const { flags, ...editPayload } = payload;
       await interaction.editReply({
         ...editPayload,
         embeds:
@@ -124,7 +125,6 @@ registerSelectMenuHandler(TICKET_PANEL_MENU_ID, async (interaction) => {
             description: 'Verifica los requisitos e inténtalo nuevamente más tarde.',
           }),
         ],
-      ephemeral: true,
     });
   }
 });
