@@ -12,9 +12,10 @@ import {
 import { helpCommand } from '@/presentation/commands/general/help';
 import { pingCommand } from '@/presentation/commands/general/ping';
 import { middlemanCommand } from '@/presentation/commands/middleman/middleman';
+import { middlemanDirectoryCommand } from '@/presentation/commands/middleman/mm';
 import type { Command } from '@/presentation/commands/types';
 
-const commands: Command[] = [pingCommand, helpCommand, middlemanCommand];
+const commands: Command[] = [pingCommand, helpCommand, middlemanCommand, middlemanDirectoryCommand];
 
 registerCommands(commands);
 

@@ -35,6 +35,10 @@ const mapItemFromPrisma = (item: Prisma.MiddlemanTradeItemGetPayload<Record<stri
       : null,
 });
 
+const hasTransactionMethod = (
+  client: PrismaClientLike,
+): client is PrismaClient => typeof (client as PrismaClient).$transaction === 'function';
+
 export class PrismaTradeRepository implements ITradeRepository {
   public constructor(private readonly prisma: PrismaClientLike) {}
 
@@ -95,14 +99,39 @@ export class PrismaTradeRepository implements ITradeRepository {
   }
 
   public async update(trade: Trade): Promise<void> {
-    await this.prisma.middlemanTrade.update({
-      where: { id: trade.id },
-      data: {
-        status: trade.status,
-        confirmed: trade.confirmed,
-        robloxUserId: trade.robloxUserId,
-      },
-    });
+    const itemsData = trade.items.map((item) => ({
+      tradeId: trade.id,
+      ...mapItemToPrisma(item),
+    }));
+
+    const run = async (client: Prisma.TransactionClient | PrismaClient): Promise<void> => {
+      await client.middlemanTrade.update({
+        where: { id: trade.id },
+        data: {
+          status: trade.status,
+          confirmed: trade.confirmed,
+          robloxUserId: trade.robloxUserId,
+          robloxUsername: trade.robloxUsername,
+        },
+      });
+
+      await client.middlemanTradeItem.deleteMany({ where: { tradeId: trade.id } });
+
+      if (itemsData.length > 0) {
+        await client.middlemanTradeItem.createMany({
+          data: itemsData,
+        });
+      }
+    };
+
+    if (hasTransactionMethod(this.prisma)) {
+      await this.prisma.$transaction(async (tx) => {
+        await run(tx);
+      });
+      return;
+    }
+
+    await run(this.prisma);
   }
 
   public async delete(id: number): Promise<void> {

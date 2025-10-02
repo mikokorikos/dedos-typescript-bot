@@ -103,6 +103,27 @@ export class TradesNotConfirmedError extends DedosError {
   }
 }
 
+export class TradeDataNotFoundError extends DedosError {
+  public constructor(userId: string) {
+    super({
+      code: 'TRADE_DATA_NOT_FOUND',
+      message: 'Debes registrar tus datos de trade antes de confirmar.',
+      metadata: { userId },
+      exposeMessage: true,
+    });
+  }
+}
+
+export class TradeAlreadyConfirmedError extends DedosError {
+  public constructor() {
+    super({
+      code: 'TRADE_ALREADY_CONFIRMED',
+      message: 'Ya confirmaste tu participación en este trade.',
+      exposeMessage: true,
+    });
+  }
+}
+
 export class ChannelCreationError extends DedosError {
   public constructor(reason?: string) {
     super({

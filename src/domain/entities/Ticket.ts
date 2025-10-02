@@ -55,6 +55,14 @@ export class Ticket {
     this.assignedMiddlemanId = undefined;
   }
 
+  public confirm(): void {
+    if (this.status !== TicketStatus.OPEN && this.status !== TicketStatus.CLAIMED) {
+      throw new InvalidTicketStateError(this.status, TicketStatus.CONFIRMED);
+    }
+
+    this.status = TicketStatus.CONFIRMED;
+  }
+
   public isOwnedBy(userId: bigint): boolean {
     return this.ownerId === userId;
   }
