@@ -13,6 +13,8 @@ import type {
   TicketParticipantInput,
 } from '@/domain/repositories/ITicketRepository';
 import type { TransactionContext } from '@/domain/repositories/transaction';
+import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
+import type { DiscordUserSnapshot } from '@/shared/types/discord';
 
 const OPEN_STATUSES: readonly TicketStatus[] = [
   TicketStatus.OPEN,
@@ -84,6 +86,16 @@ export class PrismaTicketRepository implements ITicketRepository {
 
   public async create(data: CreateTicketData): Promise<Ticket> {
     const schema = await this.getSchemaMetadata();
+
+    const snapshotLookup = new Map<bigint, DiscordUserSnapshot>();
+    data.userSnapshots?.forEach((snapshot) => {
+      snapshotLookup.set(snapshot.id, snapshot);
+    });
+
+    await ensureUsersExist(this.prisma, [
+      snapshotLookup.get(data.ownerId) ?? data.ownerId,
+      ...(data.participants?.map((participant) => snapshotLookup.get(participant.userId) ?? participant.userId) ?? []),
+    ]);
 
     if (schema.mode === 'modern') {
       const ticket = await this.prisma.ticket.create({

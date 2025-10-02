@@ -115,8 +115,8 @@ describe('ConfirmTradeUseCase', () => {
     ticketRepo.ticket = new Ticket(1, BigInt(OWNER_ID), BigInt(2), BigInt(PARTNER_ID), TicketType.MM, TicketStatus.OPEN, new Date());
     ticketRepo.participants = new Set([OWNER_ID, PARTNER_ID]);
 
-    const tradeA = new Trade(1, 1, BigInt(OWNER_ID), 'TraderA', null, TradeStatus.PENDING, false, [], new Date());
-    const tradeB = new Trade(2, 1, BigInt(PARTNER_ID), 'TraderB', null, TradeStatus.PENDING, false, [], new Date());
+    const tradeA = new Trade(1, 1, BigInt(OWNER_ID), 'TraderA', null, null, TradeStatus.PENDING, false, [], new Date());
+    const tradeB = new Trade(2, 1, BigInt(PARTNER_ID), 'TraderB', null, null, TradeStatus.PENDING, false, [], new Date());
     tradeRepo.trades = [tradeA, tradeB];
   });
 

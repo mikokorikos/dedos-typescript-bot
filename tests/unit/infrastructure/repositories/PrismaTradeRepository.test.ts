@@ -16,6 +16,7 @@ const buildTrade = (items: Parameters<Trade['replaceItems']>[0]): Trade =>
     BigInt('123456789012345678'),
     'JohnDoe',
     null,
+    null,
     TradeStatus.ACTIVE,
     true,
     items,
@@ -28,9 +29,12 @@ describe('PrismaTradeRepository.update', () => {
     const innerDeleteMany = vi.fn(async () => {});
     const innerCreateMany = vi.fn(async () => {});
 
+    const identity = { id: 73, robloxUserId: BigInt('987654321098765432') };
+
     const txStub = {
       middlemanTrade: { update: innerUpdate },
       middlemanTradeItem: { deleteMany: innerDeleteMany, createMany: innerCreateMany },
+      userRobloxIdentity: { upsert: vi.fn().mockResolvedValue(identity) },
     } satisfies Partial<Prisma.TransactionClient>;
 
     const outerUpdate = vi.fn();
@@ -43,6 +47,7 @@ describe('PrismaTradeRepository.update', () => {
       $transaction: vi.fn(async (callback: (tx: Prisma.TransactionClient) => Promise<void>) => {
         await callback(txStub as Prisma.TransactionClient);
       }),
+      userRobloxIdentity: { upsert: vi.fn().mockResolvedValue(identity) },
     };
 
     const repository = new PrismaTradeRepository(prismaClientMock as unknown as PrismaClient);
@@ -59,8 +64,9 @@ describe('PrismaTradeRepository.update', () => {
       data: {
         status: trade.status,
         confirmed: trade.confirmed,
-        robloxUserId: trade.robloxUserId,
+        robloxUserId: identity.robloxUserId,
         robloxUsername: trade.robloxUsername,
+        robloxIdentityId: identity.id,
       },
     });
     expect(innerDeleteMany).toHaveBeenCalledWith({ where: { tradeId: trade.id } });
@@ -83,16 +89,22 @@ describe('PrismaTradeRepository.update', () => {
     expect(outerUpdate).not.toHaveBeenCalled();
     expect(outerDeleteMany).not.toHaveBeenCalled();
     expect(outerCreateMany).not.toHaveBeenCalled();
+    expect(txStub.userRobloxIdentity?.upsert).toHaveBeenCalled();
+    expect(trade.robloxUserId).toBe(identity.robloxUserId);
+    expect(trade.robloxIdentityId).toBe(identity.id);
   });
 
   it('reutiliza el cliente transaccional cuando no se dispone de $transaction', async () => {
+    const identity = { id: 81, robloxUserId: BigInt('111222333444555666') };
     const update = vi.fn(async () => {});
     const deleteMany = vi.fn(async () => {});
     const createMany = vi.fn(async () => {});
+    const upsertIdentity = vi.fn().mockResolvedValue(identity);
 
     const transactionClient = {
       middlemanTrade: { update },
       middlemanTradeItem: { deleteMany, createMany },
+      userRobloxIdentity: { upsert: upsertIdentity },
     } as unknown as Prisma.TransactionClient;
 
     const repository = new PrismaTradeRepository(transactionClient);
@@ -105,12 +117,14 @@ describe('PrismaTradeRepository.update', () => {
       data: {
         status: trade.status,
         confirmed: trade.confirmed,
-        robloxUserId: trade.robloxUserId,
+        robloxUserId: identity.robloxUserId,
         robloxUsername: trade.robloxUsername,
+        robloxIdentityId: identity.id,
       },
     });
     expect(deleteMany).toHaveBeenCalledWith({ where: { tradeId: trade.id } });
     expect(createMany).not.toHaveBeenCalled();
+    expect(upsertIdentity).toHaveBeenCalled();
+    expect(trade.robloxIdentityId).toBe(identity.id);
   });
 });
-

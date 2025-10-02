@@ -9,6 +9,7 @@ import type { TradeItem } from '@/domain/entities/types';
 import type { CreateTradeData, ITradeRepository } from '@/domain/repositories/ITradeRepository';
 import type { TransactionContext } from '@/domain/repositories/transaction';
 import { TradeStatus } from '@/domain/value-objects/TradeStatus';
+import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
 type PrismaClientLike = PrismaClient | Prisma.TransactionClient;
 
@@ -51,12 +52,21 @@ export class PrismaTradeRepository implements ITradeRepository {
   }
 
   public async create(data: CreateTradeData): Promise<Trade> {
+    await ensureUsersExist(this.prisma, [data.userSnapshot ?? data.userId]);
+
+    const identity = await this.resolveRobloxIdentity(this.prisma, {
+      userId: data.userId,
+      username: data.robloxUsername,
+      robloxUserId: data.robloxUserId,
+    });
+
     const trade = await this.prisma.middlemanTrade.create({
       data: {
         ticketId: data.ticketId,
         userId: data.userId,
+        robloxIdentityId: identity.id,
         robloxUsername: data.robloxUsername,
-        robloxUserId: data.robloxUserId ?? null,
+        robloxUserId: data.robloxUserId ?? identity.robloxUserId ?? null,
         status: data.status ?? TradeStatus.PENDING,
         confirmed: data.confirmed ?? false,
         items: data.items
@@ -105,13 +115,22 @@ export class PrismaTradeRepository implements ITradeRepository {
     }));
 
     const run = async (client: Prisma.TransactionClient | PrismaClient): Promise<void> => {
+      const identity = await this.resolveRobloxIdentity(client, {
+        userId: trade.userId,
+        username: trade.robloxUsername,
+        robloxUserId: trade.robloxUserId,
+      });
+
+      const resolvedRobloxUserId = trade.robloxUserId ?? identity.robloxUserId ?? null;
+
       await client.middlemanTrade.update({
         where: { id: trade.id },
         data: {
           status: trade.status,
           confirmed: trade.confirmed,
-          robloxUserId: trade.robloxUserId,
+          robloxUserId: resolvedRobloxUserId,
           robloxUsername: trade.robloxUsername,
+          robloxIdentityId: identity.id,
         },
       });
 
@@ -122,6 +141,8 @@ export class PrismaTradeRepository implements ITradeRepository {
           data: itemsData,
         });
       }
+
+      trade.updateRobloxProfile({ userId: resolvedRobloxUserId, identityId: identity.id });
     };
 
     if (hasTransactionMethod(this.prisma)) {
@@ -145,11 +166,34 @@ export class PrismaTradeRepository implements ITradeRepository {
       trade.userId,
       trade.robloxUsername,
       trade.robloxUserId,
+      trade.robloxIdentityId ?? null,
       trade.status as TradeStatus,
       trade.confirmed,
       trade.items.map(mapItemFromPrisma),
       trade.createdAt,
     );
+  }
+
+  private async resolveRobloxIdentity(
+    client: PrismaClientLike,
+    payload: { userId: bigint; username: string; robloxUserId?: bigint | null },
+  ): Promise<{ id: number; robloxUserId: bigint | null }> {
+    const identity = await client.userRobloxIdentity.upsert({
+      where: { userId_robloxUsername: { userId: payload.userId, robloxUsername: payload.username } },
+      update: {
+        robloxUserId:
+          payload.robloxUserId === undefined ? undefined : payload.robloxUserId ?? null,
+        lastUsedAt: new Date(),
+      },
+      create: {
+        userId: payload.userId,
+        robloxUsername: payload.username,
+        robloxUserId: payload.robloxUserId ?? null,
+        lastUsedAt: new Date(),
+      },
+    });
+
+    return { id: identity.id, robloxUserId: identity.robloxUserId ?? null };
   }
 
   private static isTransactionClient(value: TransactionContext): value is Prisma.TransactionClient {

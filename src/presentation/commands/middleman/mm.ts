@@ -87,8 +87,9 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
   }
 
   const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
   const description = [
-    `• Usuario de Roblox: **${profile.robloxUsername}**`,
+    `• Usuario de Roblox: **${robloxUsername}**`,
     `• Vouches registrados: **${profile.vouches}**`,
     `• Valoraciones recibidas: **${profile.ratingCount}**`,
     `• Promedio actual: **${average.toFixed(2)} ⭐**`,
@@ -124,7 +125,8 @@ const handleList = async (interaction: ChatInputCommandInteraction): Promise<voi
 
   const lines = profiles.map((profile, index) => {
     const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-    return `${index + 1}. <@${profile.userId.toString()}> — Roblox: **${profile.robloxUsername}** | Vouches: ${profile.vouches} | Rating: ${average.toFixed(2)} (${profile.ratingCount})`;
+    const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+    return `${index + 1}. <@${profile.userId.toString()}> — Roblox: **${robloxUsername}** | Vouches: ${profile.vouches} | Rating: ${average.toFixed(2)} (${profile.ratingCount})`;
   });
 
   await interaction.reply({

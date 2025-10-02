@@ -37,19 +37,26 @@ enum TradeStatus {
 }
 
 model User {
-  id            BigInt                 @id @map("id")
-  robloxId      BigInt?                @map("roblox_id")
-  createdAt     DateTime               @default(now()) @map("created_at")
+  id              BigInt                               @id @map("id")
+  username        String?                              @map("username")
+  discriminator   String?                              @map("discriminator")
+  globalName      String?                              @map("global_name")
+  avatarHash      String?                              @map("avatar_hash")
+  bot             Boolean                              @default(false) @map("bot")
+  firstSeenAt     DateTime                             @default(now()) @map("first_seen_at")
+  lastSeenAt      DateTime                             @default(now()) @map("last_seen_at")
 
-  warns         Warn[]
-  moderatedWarns Warn[]                @relation("WarnModerator")
-  tickets       Ticket[]               @relation("TicketOwner")
-  ticketRoles   TicketParticipant[]
-  middleman     Middleman?
-  mmTrades      MiddlemanTrade[]
-  authoredReviews MiddlemanReview[]    @relation("ReviewAuthor")
-  stats         MemberTradeStats?
+  warns           Warn[]
+  moderatedWarns  Warn[]                               @relation("WarnModerator")
+  tickets         Ticket[]                             @relation("TicketOwner")
+  ticketRoles     TicketParticipant[]
+  middleman       Middleman?
+  mmTrades        MiddlemanTrade[]
+  authoredReviews MiddlemanReview[]                    @relation("ReviewAuthor")
+  stats           MemberTradeStats?
   tradeFinalizations MiddlemanTradeFinalization[]
+  robloxIdentities UserRobloxIdentity[]
+  guildMemberships GuildMember[]
 
   @@map("users")
 }
@@ -106,38 +113,40 @@ model TicketParticipant {
 }
 
 model Middleman {
-  userId         BigInt          @id @map("user_id")
-  robloxUsername String          @map("roblox_username")
-  robloxUserId   BigInt?         @map("roblox_user_id")
-  createdAt      DateTime        @default(now()) @map("created_at")
-  updatedAt      DateTime        @updatedAt @map("updated_at")
+  userId                 BigInt              @id @map("user_id")
+  primaryRobloxIdentityId Int?               @map("primary_roblox_identity_id")
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
 
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  claims         MiddlemanClaim[]
-  reviews        MiddlemanReview[] @relation("ReviewMiddleman")
+  user                   User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  primaryRobloxIdentity  UserRobloxIdentity? @relation("MiddlemanPrimaryIdentity", fields: [primaryRobloxIdentityId], references: [id], onDelete: SetNull)
+  claims                 MiddlemanClaim[]
+  reviews                MiddlemanReview[]   @relation("ReviewMiddleman")
 
-  @@index([robloxUserId])
   @@map("middlemen")
 }
 
 model MiddlemanTrade {
-  id             Int           @id @default(autoincrement())
-  ticketId       Int           @map("ticket_id")
-  userId         BigInt        @map("user_id")
-  robloxUsername String        @map("roblox_username")
-  robloxUserId   BigInt?       @map("roblox_user_id")
-  status         TradeStatus   @default(PENDING) @map("status")
-  confirmed      Boolean       @default(false) @map("confirmed")
-  createdAt      DateTime      @default(now()) @map("created_at")
-  updatedAt      DateTime      @updatedAt @map("updated_at")
+  id               Int                 @id @default(autoincrement())
+  ticketId         Int                 @map("ticket_id")
+  userId           BigInt              @map("user_id")
+  robloxIdentityId Int?                @map("roblox_identity_id")
+  robloxUsername   String              @map("roblox_username")
+  robloxUserId     BigInt?             @map("roblox_user_id")
+  status           TradeStatus         @default(PENDING) @map("status")
+  confirmed        Boolean             @default(false) @map("confirmed")
+  createdAt        DateTime            @default(now()) @map("created_at")
+  updatedAt        DateTime            @updatedAt @map("updated_at")
 
-  ticket         Ticket        @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  items          MiddlemanTradeItem[]
+  ticket           Ticket              @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  robloxIdentity   UserRobloxIdentity? @relation(fields: [robloxIdentityId], references: [id], onDelete: SetNull)
+  items            MiddlemanTradeItem[]
 
   @@unique([ticketId, userId])
   @@index([ticketId])
   @@index([userId])
+  @@index([robloxIdentityId])
   @@map("mm_trades")
 }
 
@@ -203,15 +212,51 @@ model MiddlemanTradeFinalization {
 }
 
 model MemberTradeStats {
-  userId         BigInt   @id @map("user_id")
-  tradesCompleted Int     @default(0) @map("trades_completed")
-  lastTradeAt     DateTime? @map("last_trade_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
-  robloxUsername  String?   @map("roblox_username")
-  robloxUserId    BigInt?   @map("roblox_user_id")
-  partnerTag      String?   @map("partner_tag")
+  userId                   BigInt              @id @map("user_id")
+  tradesCompleted          Int                 @default(0) @map("trades_completed")
+  lastTradeAt              DateTime?           @map("last_trade_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
+  preferredRobloxIdentityId Int?               @map("preferred_roblox_identity_id")
+  partnerTag               String?             @map("partner_tag")
 
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                     User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  preferredRobloxIdentity  UserRobloxIdentity? @relation("PreferredIdentity", fields: [preferredRobloxIdentityId], references: [id], onDelete: SetNull)
 
   @@map("member_trade_stats")
+}
+
+model UserRobloxIdentity {
+  id                Int                 @id @default(autoincrement())
+  userId            BigInt              @map("user_id")
+  robloxUserId      BigInt?             @map("roblox_user_id")
+  robloxUsername    String              @map("roblox_username")
+  verified          Boolean             @default(false) @map("verified")
+  createdAt         DateTime            @default(now()) @map("created_at")
+  updatedAt         DateTime            @updatedAt @map("updated_at")
+  lastUsedAt        DateTime?           @map("last_used_at")
+
+  user              User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  middlemanProfiles Middleman[]         @relation("MiddlemanPrimaryIdentity")
+  trades            MiddlemanTrade[]
+  preferredByStats  MemberTradeStats[]  @relation("PreferredIdentity")
+
+  @@index([userId])
+  @@index([robloxUserId])
+  @@unique([userId, robloxUsername])
+  @@map("user_roblox_identities")
+}
+
+model GuildMember {
+  guildId    BigInt   @map("guild_id")
+  userId     BigInt   @map("user_id")
+  nickname   String?  @map("nickname")
+  joinedAt   DateTime? @map("joined_at")
+  lastSeenAt DateTime  @default(now()) @map("last_seen_at")
+  roles      Json?     @map("roles")
+
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([guildId, userId])
+  @@index([userId])
+  @@map("guild_members")
 }

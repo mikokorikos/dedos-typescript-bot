@@ -6,6 +6,7 @@ import type { Trade } from '@/domain/entities/Trade';
 import type { TradeItem } from '@/domain/entities/types';
 import type { Transactional } from '@/domain/repositories/transaction';
 import type { TradeStatus } from '@/domain/value-objects/TradeStatus';
+import type { DiscordUserSnapshot } from '@/shared/types/discord';
 
 export interface CreateTradeData {
   readonly ticketId: number;
@@ -15,6 +16,7 @@ export interface CreateTradeData {
   readonly status?: TradeStatus;
   readonly confirmed?: boolean;
   readonly items?: ReadonlyArray<TradeItem>;
+  readonly userSnapshot?: DiscordUserSnapshot;
 }
 
 export interface ITradeRepository extends Transactional<ITradeRepository> {

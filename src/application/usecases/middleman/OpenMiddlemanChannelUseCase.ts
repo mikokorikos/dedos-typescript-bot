@@ -18,6 +18,7 @@ import {
   ValidationFailedError,
 } from '@/shared/errors/domain.errors';
 import { sanitizeChannelName } from '@/shared/utils/discord.utils';
+import { snapshotFromMember } from '@/shared/utils/discordIdentity';
 
 const MAX_OPEN_TICKETS = 3;
 const SNOWFLAKE_EXTRACTOR = /\d{17,20}/u;
@@ -78,6 +79,22 @@ export class OpenMiddlemanChannelUseCase {
       });
     }
 
+    const ownerMember = await guild.members.fetch(payload.userId).catch(() => null);
+    if (!ownerMember) {
+      throw new ChannelCreationError('No se pudo validar al solicitante dentro del servidor.');
+    }
+
+    const partnerMember = await guild.members.fetch(partnerId.toString()).catch(() => null);
+
+    if (!partnerMember) {
+      throw new ValidationFailedError({
+        partnerTag: 'La persona mencionada debe estar en el servidor para crear un ticket de middleman.',
+      });
+    }
+
+    const ownerSnapshot = snapshotFromMember(ownerMember);
+    const partnerSnapshot = snapshotFromMember(partnerMember);
+
     let createdChannel: TextChannel;
     try {
       createdChannel = await guild.channels.create({
@@ -122,7 +139,17 @@ export class OpenMiddlemanChannelUseCase {
         ],
       });
     } catch (error) {
-      this.logger.error({ err: error, channelName }, 'Falló la creación del canal de middleman.');
+      this.logger.error(
+        {
+          err: error,
+          channelName,
+          guildId: payload.guildId,
+          ownerId: payload.userId,
+          partnerId: partnerId.toString(),
+          categoryId: payload.categoryId,
+        },
+        'Falló la creación del canal de middleman.',
+      );
       throw new ChannelCreationError((error as Error).message);
     }
 
@@ -141,6 +168,7 @@ export class OpenMiddlemanChannelUseCase {
           ownerId,
           type: TicketType.MM,
           participants,
+          userSnapshots: [ownerSnapshot, partnerSnapshot],
         });
       });
 
@@ -168,19 +196,39 @@ export class OpenMiddlemanChannelUseCase {
       }
 
       this.logger.info(
-        { ticketId: ticket.id, channelId: createdChannel.id, ownerId: payload.userId },
+        {
+          ticketId: ticket.id,
+          channelId: createdChannel.id,
+          ownerId: payload.userId,
+          partnerId: partnerId.toString(),
+          guildId: payload.guildId,
+        },
         'Ticket de middleman creado exitosamente.',
       );
 
       return { ticket, channel: createdChannel };
     } catch (error) {
-      this.logger.error({ err: error, ownerId: payload.userId }, 'Fallo al persistir ticket de middleman.');
+      this.logger.error(
+        {
+          err: error,
+          ownerId: payload.userId,
+          partnerId: partnerId.toString(),
+          guildId: payload.guildId,
+          channelId: createdChannel.id,
+        },
+        'Fallo al persistir ticket de middleman.',
+      );
 
       try {
         await createdChannel.delete('Error al registrar el ticket de middleman.');
       } catch (cleanupError) {
         this.logger.error(
-          { err: cleanupError, channelId: createdChannel.id },
+          {
+            err: cleanupError,
+            channelId: createdChannel.id,
+            guildId: payload.guildId,
+            ownerId: payload.userId,
+          },
           'Fallo al limpiar canal tras error.',
         );
         throw new ChannelCleanupError(createdChannel.id, cleanupError);

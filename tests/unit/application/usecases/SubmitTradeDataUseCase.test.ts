@@ -78,6 +78,7 @@ class MockTradeRepository implements ITradeRepository {
       data.userId,
       data.robloxUsername,
       data.robloxUserId ?? null,
+      null,
       data.status ?? TradeStatus.PENDING,
       data.confirmed ?? false,
       data.items ? [...data.items] : [],
@@ -152,7 +153,7 @@ describe('SubmitTradeDataUseCase', () => {
   });
 
   it('updates existing trade and resets confirmation', async () => {
-    const existing = new Trade(1, 1, BigInt(PARTNER_ID), 'OldName', null, TradeStatus.ACTIVE, true, [], new Date());
+    const existing = new Trade(1, 1, BigInt(PARTNER_ID), 'OldName', null, null, TradeStatus.ACTIVE, true, [], new Date());
     tradeRepo.trades = [existing];
 
     const dto: SubmitTradeDataDTO = {

@@ -17,6 +17,7 @@ import {
   ValidationFailedError,
 } from '@/shared/errors/domain.errors';
 import { sanitizeChannelName } from '@/shared/utils/discord.utils';
+import { snapshotFromMember } from '@/shared/utils/discordIdentity';
 
 const cooldownTracker = new Map<string, number>();
 
@@ -133,6 +134,7 @@ export class OpenSupportTicketUseCase {
         ownerId,
         type,
         participants: [{ userId: ownerId, role: 'OWNER' }],
+        userSnapshots: [snapshotFromMember(member)],
       });
 
       cooldownTracker.set(cooldownKey, now);
