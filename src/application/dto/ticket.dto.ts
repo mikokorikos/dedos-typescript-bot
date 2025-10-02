@@ -12,7 +12,7 @@ export const CreateMiddlemanTicketSchema = z.object({
   partnerTag: z
     .string()
     .trim()
-    .regex(/^(?:<@!?(\d{17,20})>|\d{17,20})$/u, 'Debe proporcionar la mención o ID del compañero'),
+    .regex(/^(?:<@!?(\d{17,20})>|\d{17,20})$/u, 'Debe proporcionar la mencion o ID del companero'),
   categoryId: z.string().regex(/^\d+$/u, 'Invalid category ID'),
   robloxUsername: z.string().min(3).max(50).optional(),
 });

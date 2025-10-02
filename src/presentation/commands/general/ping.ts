@@ -2,7 +2,7 @@
 // RUTA: src/presentation/commands/general/ping.ts
 // ============================================================================
 
-import { SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
@@ -51,7 +51,7 @@ export const pingCommand: Command = {
           footer: `Próxima actualización disponible en ${COOLDOWNS.ping / 1000}s`,
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

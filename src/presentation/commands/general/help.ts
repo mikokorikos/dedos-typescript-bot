@@ -2,7 +2,7 @@
 // RUTA: src/presentation/commands/general/help.ts
 // ============================================================================
 
-import { SlashCommandBuilder } from 'discord.js';
+import { MessageFlags, SlashCommandBuilder } from 'discord.js';
 
 import { getRegisteredCommands } from '@/presentation/commands/command-registry';
 import type { Command } from '@/presentation/commands/types';
@@ -42,7 +42,7 @@ export const helpCommand: Command = {
   async execute(interaction) {
     await interaction.reply({
       embeds: [createHelpEmbed()],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   },
 };

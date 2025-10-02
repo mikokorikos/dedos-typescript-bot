@@ -2,7 +2,8 @@
 // RUTA: src/presentation/commands/middleman/mm.ts
 // ============================================================================
 
-import { type ChatInputCommandInteraction,PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import type { ChatInputCommandInteraction } from 'discord.js';
+import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 
 import { prisma } from '@/infrastructure/db/prisma';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
@@ -40,7 +41,7 @@ const handleAdd = async (interaction: ChatInputCommandInteraction): Promise<void
         description: `${target.toString()} ahora forma parte del directorio de middlemen con el usuario Roblox **${robloxUsername}**.`,
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 };
 
@@ -64,7 +65,7 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
           : `${target.toString()} mantiene su información pero se actualizó la ficha.`,
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 };
 
@@ -80,7 +81,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
           description: `${target.toString()} todavía no cuenta con estadísticas como middleman.`,
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -100,7 +101,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
         description,
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 };
 
@@ -116,7 +117,7 @@ const handleList = async (interaction: ChatInputCommandInteraction): Promise<voi
           description: 'Aún no se registran middlemen en el sistema.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -133,7 +134,7 @@ const handleList = async (interaction: ChatInputCommandInteraction): Promise<voi
         description: lines.join('\n'),
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 };
 
@@ -215,7 +216,7 @@ export const middlemanDirectoryCommand: Command = {
                 description: 'El subcomando solicitado no está implementado.',
               }),
             ],
-            ephemeral: true,
+            flags: MessageFlags.Ephemeral,
           });
       }
     } catch (error) {
@@ -236,7 +237,6 @@ export const middlemanDirectoryCommand: Command = {
               description: 'Ocurrió un problema al ejecutar el comando.',
             }),
           ],
-        ephemeral: true,
       });
     }
   },

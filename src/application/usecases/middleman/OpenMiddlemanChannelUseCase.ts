@@ -74,7 +74,7 @@ export class OpenMiddlemanChannelUseCase {
 
     if (!partnerId) {
       throw new ValidationFailedError({
-        partnerTag: 'Debes mencionar o introducir el ID de la persona con la que harás el trade.',
+        partnerTag: 'Debes mencionar o introducir el ID de la persona con la que haras el trade.',
       });
     }
 
