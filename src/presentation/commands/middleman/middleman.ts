@@ -2,18 +2,15 @@
 // RUTA: src/presentation/commands/middleman/middleman.ts
 // ============================================================================
 
-import {
-  ChannelType,
-  type ChatInputCommandInteraction,
-  SlashCommandBuilder,
-  type TextChannel,
-} from 'discord.js';
+import { ChannelType, type ChatInputCommandInteraction, SlashCommandBuilder, type TextChannel } from 'discord.js';
 
 import { reviewInviteStore } from '@/application/services/ReviewInviteStore';
 import { ClaimTradeUseCase } from '@/application/usecases/middleman/ClaimTradeUseCase';
 import { CloseTradeUseCase } from '@/application/usecases/middleman/CloseTradeUseCase';
+import { ConfirmTradeUseCase } from '@/application/usecases/middleman/ConfirmTradeUseCase';
 import { OpenMiddlemanChannelUseCase } from '@/application/usecases/middleman/OpenMiddlemanChannelUseCase';
 import { SubmitReviewUseCase } from '@/application/usecases/middleman/SubmitReviewUseCase';
+import { SubmitTradeDataUseCase } from '@/application/usecases/middleman/SubmitTradeDataUseCase';
 import { prisma } from '@/infrastructure/db/prisma';
 import { PrismaMemberStatsRepository } from '@/infrastructure/repositories/PrismaMemberStatsRepository';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
@@ -21,11 +18,18 @@ import { PrismaReviewRepository } from '@/infrastructure/repositories/PrismaRevi
 import { PrismaTicketRepository } from '@/infrastructure/repositories/PrismaTicketRepository';
 import { PrismaTradeRepository } from '@/infrastructure/repositories/PrismaTradeRepository';
 import type { Command } from '@/presentation/commands/types';
-import { buildReviewButtonRow,REVIEW_BUTTON_CUSTOM_ID } from '@/presentation/components/buttons/ReviewButtons';
+import { buildReviewButtonRow, REVIEW_BUTTON_CUSTOM_ID } from '@/presentation/components/buttons/ReviewButtons';
+import {
+  TRADE_CONFIRM_BUTTON_ID,
+  TRADE_DATA_BUTTON_ID,
+  TRADE_HELP_BUTTON_ID,
+} from '@/presentation/components/buttons/TradePanelButtons';
 import { MiddlemanModal } from '@/presentation/components/modals/MiddlemanModal';
 import { ReviewModal } from '@/presentation/components/modals/ReviewModal';
+import { TradeModal } from '@/presentation/components/modals/TradeModal';
 import { modalHandlers, registerButtonHandler, registerModalHandler } from '@/presentation/components/registry';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
+import { TradePanelRenderer } from '@/presentation/middleman/TradePanelRenderer';
 import { env } from '@/shared/config/env';
 import { mapErrorToDiscordResponse } from '@/shared/errors/discord-error-mapper';
 import { TicketNotFoundError, UnauthorizedActionError } from '@/shared/errors/domain.errors';
@@ -41,9 +45,97 @@ const openUseCase = new OpenMiddlemanChannelUseCase(ticketRepo, prisma, logger, 
 const claimUseCase = new ClaimTradeUseCase(ticketRepo, middlemanRepo, logger, embedFactory);
 const closeUseCase = new CloseTradeUseCase(ticketRepo, tradeRepo, statsRepo, middlemanRepo, prisma, logger, embedFactory);
 const submitReviewUseCase = new SubmitReviewUseCase(reviewRepo, ticketRepo, embedFactory, logger);
+const submitTradeDataUseCase = new SubmitTradeDataUseCase(ticketRepo, tradeRepo, logger);
+const confirmTradeUseCase = new ConfirmTradeUseCase(ticketRepo, tradeRepo, logger);
+const tradePanelRenderer = new TradePanelRenderer(ticketRepo, tradeRepo, logger, embedFactory);
 
 registerModalHandler('middleman-open', async (interaction) => {
-  await MiddlemanModal.handleSubmit(interaction, openUseCase);
+  await MiddlemanModal.handleSubmit(interaction, openUseCase, {
+    async renderPanel(channel, ticketId) {
+      await tradePanelRenderer.render(channel, ticketId);
+    },
+  });
+});
+
+registerModalHandler(TradeModal.CUSTOM_ID, async (interaction) => {
+  const channel = interaction.channel;
+
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      embeds: [
+        embedFactory.error({
+          title: 'Canal incompatible',
+          description: 'Este formulario solo puede utilizarse dentro de un canal de texto.',
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  try {
+    const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
+
+    if (!ticket) {
+      throw new TicketNotFoundError(channel.id);
+    }
+
+    const { robloxUsername, offerDescription } = TradeModal.parseFields(interaction);
+
+    await submitTradeDataUseCase.execute({
+      ticketId: ticket.id,
+      userId: interaction.user.id,
+      robloxUsername,
+      offerDescription,
+    });
+
+    await tradePanelRenderer.render(channel, ticket.id);
+
+    await interaction.reply({
+      embeds: [
+        embedFactory.success({
+          title: 'Datos registrados',
+          description: 'Tu información del trade se actualizó correctamente.',
+        }),
+      ],
+      ephemeral: true,
+    });
+  } catch (error) {
+    const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
+
+    if (shouldLogStack) {
+      logger.error({ err: error, referenceId }, 'Error inesperado al registrar datos de trade.');
+    } else {
+      logger.warn({ err: error, referenceId }, 'Error controlado al registrar datos de trade.');
+    }
+
+    if (interaction.deferred || interaction.replied) {
+      const { ephemeral, flags, ...editPayload } = payload;
+      await interaction.editReply({
+        ...editPayload,
+        embeds:
+          embeds ?? [
+            embedFactory.error({
+              title: 'No se pudo guardar tus datos',
+              description: 'Inténtalo nuevamente más tarde o contacta al staff.',
+            }),
+          ],
+      });
+      return;
+    }
+
+    await interaction.reply({
+      ...payload,
+      embeds:
+        embeds ?? [
+          embedFactory.error({
+            title: 'No se pudo guardar tus datos',
+            description: 'Inténtalo nuevamente más tarde o contacta al staff.',
+          }),
+        ],
+      ephemeral: true,
+    });
+  }
 });
 
 registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
@@ -102,7 +194,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
 
       const channel = await modalInteraction.client.channels.fetch(env.REVIEW_CHANNEL_ID);
 
-      if (!channel || !channel.isTextBased()) {
+      if (!channel || channel.type !== ChannelType.GuildText) {
         await modalInteraction.reply({
           embeds: [
             embedFactory.error({
@@ -123,7 +215,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           rating,
           comment: comment ?? undefined,
         },
-        channel as TextChannel,
+        channel,
       );
 
       await modalInteraction.reply({
@@ -161,6 +253,139 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
   });
 
   await interaction.showModal(ReviewModal.build(modalCustomId));
+});
+
+registerButtonHandler(TRADE_DATA_BUTTON_ID, async (interaction) => {
+  if (!interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      embeds: [
+        embedFactory.warning({
+          title: 'Acción no disponible',
+          description: 'Este botón solo funciona dentro de un canal de trade.',
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.showModal(TradeModal.build());
+});
+
+registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
+  const channel = interaction.channel;
+
+  if (!channel || channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      embeds: [
+        embedFactory.warning({
+          title: 'Acción no disponible',
+          description: 'Este botón solo funciona dentro de un canal de trade.',
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  try {
+    const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
+
+    if (!ticket) {
+      throw new TicketNotFoundError(channel.id);
+    }
+
+    const result = await confirmTradeUseCase.execute({
+      ticketId: ticket.id,
+      userId: interaction.user.id,
+    });
+
+    await tradePanelRenderer.render(channel, ticket.id);
+
+    await interaction.reply({
+      embeds: [
+        embedFactory.success({
+          title: 'Confirmación registrada',
+          description: 'Tu confirmación quedó registrada correctamente.',
+        }),
+      ],
+      ephemeral: true,
+    });
+
+    if (result.ticketConfirmed) {
+      const mention = env.MIDDLEMAN_ROLE_ID ? `<@&${env.MIDDLEMAN_ROLE_ID}>` : 'Equipo middleman';
+      await interaction.channel.send({
+        content: `${mention}, el trade está listo para asistencia.`,
+        allowedMentions: env.MIDDLEMAN_ROLE_ID ? { roles: [env.MIDDLEMAN_ROLE_ID] } : { parse: [] },
+      });
+    }
+  } catch (error) {
+    const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
+
+    if (shouldLogStack) {
+      logger.error({ err: error, referenceId }, 'Error inesperado al confirmar trade.');
+    } else {
+      logger.warn({ err: error, referenceId }, 'Error controlado al confirmar trade.');
+    }
+
+    if (interaction.deferred || interaction.replied) {
+      const { ephemeral, flags, ...editPayload } = payload;
+      await interaction.editReply({
+        ...editPayload,
+        embeds:
+          embeds ?? [
+            embedFactory.error({
+              title: 'No se pudo confirmar el trade',
+              description: 'Inténtalo nuevamente o contacta al staff.',
+            }),
+          ],
+      });
+      return;
+    }
+
+    await interaction.reply({
+      ...payload,
+      embeds:
+        embeds ?? [
+          embedFactory.error({
+            title: 'No se pudo confirmar el trade',
+            description: 'Inténtalo nuevamente o contacta al staff.',
+          }),
+        ],
+      ephemeral: true,
+    });
+  }
+});
+
+registerButtonHandler(TRADE_HELP_BUTTON_ID, async (interaction) => {
+  if (!interaction.channel || interaction.channel.type !== ChannelType.GuildText) {
+    await interaction.reply({
+      embeds: [
+        embedFactory.warning({
+          title: 'Acción no disponible',
+          description: 'Este botón solo funciona dentro de un canal de trade.',
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [
+      embedFactory.info({
+        title: 'Asistencia solicitada',
+        description: 'Se notificó al equipo middleman. Por favor, espera en el canal.',
+      }),
+    ],
+    ephemeral: true,
+  });
+
+  const mention = env.MIDDLEMAN_ROLE_ID ? `<@&${env.MIDDLEMAN_ROLE_ID}>` : 'Equipo middleman';
+  await interaction.channel.send({
+    content: `${mention}, <@${interaction.user.id}> solicitó asistencia en este trade.`,
+    allowedMentions: env.MIDDLEMAN_ROLE_ID ? { roles: [env.MIDDLEMAN_ROLE_ID] } : { users: [interaction.user.id] },
+  });
 });
 
 const ensureTextChannel = (interaction: ChatInputCommandInteraction): TextChannel => {

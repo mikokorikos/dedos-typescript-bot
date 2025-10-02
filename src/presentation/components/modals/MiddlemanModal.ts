@@ -6,6 +6,7 @@ import {
   ActionRowBuilder,
   ModalBuilder,
   type ModalSubmitInteraction,
+  type TextChannel,
   TextInputBuilder,
   TextInputStyle,
 } from 'discord.js';
@@ -58,6 +59,7 @@ export class MiddlemanModal {
   public static async handleSubmit(
     interaction: ModalSubmitInteraction,
     useCase: OpenMiddlemanChannelUseCase,
+    options: { renderPanel?: (channel: TextChannel, ticketId: number) => Promise<void> } = {},
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
@@ -105,6 +107,10 @@ export class MiddlemanModal {
         },
         interaction.guild,
       );
+
+      if (options.renderPanel) {
+        await options.renderPanel(channel, ticket.id);
+      }
 
       await interaction.editReply({
         embeds: [

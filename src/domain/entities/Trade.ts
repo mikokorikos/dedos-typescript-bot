@@ -7,20 +7,24 @@ import { TradeStatus, TradeStatusVO } from '@/domain/value-objects/TradeStatus';
 import { InvalidTradeStateError } from '@/shared/errors/domain.errors';
 
 export class Trade {
-  public readonly items: TradeItem[];
+  private itemsInternal: TradeItem[];
 
   public constructor(
     public readonly id: number,
     public readonly ticketId: number,
     public readonly userId: bigint,
-    public readonly robloxUsername: string,
+    public robloxUsername: string,
     public robloxUserId: bigint | null,
     public status: TradeStatus,
     public confirmed: boolean,
     items: TradeItem[],
     public readonly createdAt: Date,
   ) {
-    this.items = [...items];
+    this.itemsInternal = [...items];
+  }
+
+  public get items(): ReadonlyArray<TradeItem> {
+    return [...this.itemsInternal];
   }
 
   public confirm(): void {
@@ -59,7 +63,34 @@ export class Trade {
       throw new InvalidTradeStateError(this.status, this.status);
     }
 
-    this.items.push(item);
+    this.itemsInternal.push(item);
+  }
+
+  public replaceItems(items: ReadonlyArray<TradeItem>): void {
+    if (this.status === TradeStatus.CANCELLED) {
+      throw new InvalidTradeStateError(this.status, this.status);
+    }
+
+    this.itemsInternal = [...items];
+  }
+
+  public resetConfirmation(): void {
+    if (this.status === TradeStatus.CANCELLED) {
+      throw new InvalidTradeStateError(this.status, TradeStatus.PENDING);
+    }
+
+    this.confirmed = false;
+    this.status = TradeStatus.PENDING;
+  }
+
+  public updateRobloxProfile(details: { username?: string; userId?: bigint | null }): void {
+    if (details.username) {
+      this.robloxUsername = details.username;
+    }
+
+    if (details.userId !== undefined) {
+      this.robloxUserId = details.userId;
+    }
   }
 
   public canBeCompleted(): boolean {

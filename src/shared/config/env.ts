@@ -48,6 +48,10 @@ export const EnvSchema = z.object({
     .string()
     .regex(/^\d{17,20}$/u, 'MIDDLEMAN_CATEGORY_ID debe ser un snowflake de Discord')
     .optional(),
+  MIDDLEMAN_ROLE_ID: z
+    .string()
+    .regex(/^\d{17,20}$/u, 'MIDDLEMAN_ROLE_ID debe ser un snowflake de Discord')
+    .optional(),
   REVIEW_CHANNEL_ID: z
     .string()
     .regex(/^\d{17,20}$/u, 'REVIEW_CHANNEL_ID debe ser un snowflake de Discord')
