@@ -35,6 +35,11 @@ export const messageCreateEvent: EventDescriptor<typeof Events.MessageCreate> = 
     }
 
     const [rawName, ...args] = content.split(/\s+/u);
+
+    if (!rawName) {
+      return;
+    }
+
     const commandName = rawName.toLowerCase();
     const command = prefixCommandRegistry.get(commandName);
 

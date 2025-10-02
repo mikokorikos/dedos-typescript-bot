@@ -16,7 +16,7 @@ import type { TransactionContext } from '@/domain/repositories/transaction';
 import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 import type { DiscordUserSnapshot } from '@/shared/types/discord';
 
-const OPEN_STATUSES: readonly TicketStatus[] = [
+const OPEN_STATUSES: TicketStatus[] = [
   TicketStatus.OPEN,
   TicketStatus.CONFIRMED,
   TicketStatus.CLAIMED,
@@ -160,7 +160,7 @@ export class PrismaTicketRepository implements ITicketRepository {
     const schema = await this.getSchemaMetadata();
 
     if (schema.mode === 'modern') {
-      const tickets = await this.prisma.ticket.findMany({
+      const tickets: PrismaTicketWithRelations[] = await this.prisma.ticket.findMany({
         where: {
           ownerId,
           status: { in: OPEN_STATUSES },

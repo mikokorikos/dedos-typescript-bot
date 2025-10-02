@@ -2,7 +2,7 @@
 // RUTA: src/presentation/commands/middleman/middleman.ts
 // ============================================================================
 
-import type { ChatInputCommandInteraction, TextChannel } from 'discord.js';
+import type { ChatInputCommandInteraction, TextBasedChannel, TextChannel } from 'discord.js';
 import { ChannelType, MessageFlags, SlashCommandBuilder } from 'discord.js';
 
 import { reviewInviteStore } from '@/application/services/ReviewInviteStore';
@@ -59,6 +59,11 @@ const submitReviewUseCase = new SubmitReviewUseCase(reviewRepo, ticketRepo, embe
 const submitTradeDataUseCase = new SubmitTradeDataUseCase(ticketRepo, tradeRepo, logger);
 const confirmTradeUseCase = new ConfirmTradeUseCase(ticketRepo, tradeRepo, logger);
 const tradePanelRenderer = new TradePanelRenderer(ticketRepo, tradeRepo, logger, embedFactory);
+
+type SendableChannel = TextBasedChannel & { send: (...args: unknown[]) => unknown };
+
+const isSendableChannel = (channel: TextBasedChannel | null): channel is SendableChannel =>
+  Boolean(channel && typeof (channel as { send?: unknown }).send === 'function');
 
 registerModalHandler('middleman-open', async (interaction) => {
   await MiddlemanModal.handleSubmit(interaction, openUseCase, {
@@ -325,10 +330,19 @@ registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
 
     if (result.ticketConfirmed) {
       const mention = env.MIDDLEMAN_ROLE_ID ? `<@&${env.MIDDLEMAN_ROLE_ID}>` : 'Equipo middleman';
-      await interaction.channel.send({
-        content: `${mention}, el trade está listo para asistencia.`,
-        allowedMentions: env.MIDDLEMAN_ROLE_ID ? { roles: [env.MIDDLEMAN_ROLE_ID] } : { parse: [] },
-      });
+      const notificationChannel = interaction.channel;
+
+      if (isSendableChannel(notificationChannel)) {
+        await notificationChannel.send({
+          content: `${mention}, el trade está listo para asistencia.`,
+          allowedMentions: env.MIDDLEMAN_ROLE_ID ? { roles: [env.MIDDLEMAN_ROLE_ID] } : { parse: [] },
+        });
+      } else {
+        logger.warn(
+          { channelId: notificationChannel?.id, interactionId: interaction.id },
+          'No se pudo notificar al equipo middleman: canal no soporta envíos.',
+        );
+      }
     }
   } catch (error) {
     const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
@@ -393,7 +407,17 @@ registerButtonHandler(TRADE_HELP_BUTTON_ID, async (interaction) => {
   });
 
   const mention = env.MIDDLEMAN_ROLE_ID ? `<@&${env.MIDDLEMAN_ROLE_ID}>` : 'Equipo middleman';
-  await interaction.channel.send({
+  const channel = interaction.channel;
+
+  if (!isSendableChannel(channel)) {
+    logger.warn(
+      { channelId: channel?.id, interactionId: interaction.id },
+      'No se pudo enviar la solicitud de asistencia: canal no soporta envíos.',
+    );
+    return;
+  }
+
+  await channel.send({
     content: `${mention}, <@${interaction.user.id}> solicitó asistencia en este trade.`,
     allowedMentions: env.MIDDLEMAN_ROLE_ID ? { roles: [env.MIDDLEMAN_ROLE_ID] } : { users: [interaction.user.id] },
   });
@@ -567,6 +591,14 @@ export const middlemanCommand: Command = {
 
       if (!subcommand || subcommand.toLowerCase() === 'panel') {
         const panel = buildMiddlemanPanelMessage();
+        if (!isSendableChannel(message.channel)) {
+          logger.warn(
+            { channelId: message.channel?.id ?? null, messageId: message.id },
+            'No se pudo enviar el panel de middleman desde comando con prefijo: canal no soporta envíos.',
+          );
+          return;
+        }
+
         await message.channel.send({
           ...panel,
           allowedMentions: { parse: [] },
