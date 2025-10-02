@@ -115,6 +115,10 @@ export const ensureUsersExist = async (
   prisma: PrismaClient | Prisma.TransactionClient,
   rawInputs: readonly (SnapshotInput | undefined | null)[],
 ): Promise<void> => {
+  // FIX: Prisma typings expose model delegates on both PrismaClient and TransactionClient,
+  // but the union type does not allow direct property access. Narrow explicitly to reuse delegates.
+  const client = prisma as Prisma.TransactionClient;
+
   const inputs = rawInputs.filter((value): value is SnapshotInput => value !== null && value !== undefined);
 
   if (inputs.length === 0) {
@@ -141,7 +145,7 @@ export const ensureUsersExist = async (
   }
 
   const userUpserts = Array.from(userSnapshots.values(), async (snapshot) => {
-    await prisma.user.upsert({
+    await client.user.upsert({
       where: { id: snapshot.userId },
       create: {
         id: snapshot.userId,
@@ -171,7 +175,7 @@ export const ensureUsersExist = async (
   }
 
   const membershipUpserts = Array.from(membershipSnapshots.values(), async (snapshot) => {
-    await prisma.guildMember.upsert({
+    await client.guildMember.upsert({
       where: { guildId_userId: { guildId: snapshot.guildId, userId: snapshot.userId } },
       create: {
         guildId: snapshot.guildId,

@@ -178,7 +178,10 @@ export class PrismaTradeRepository implements ITradeRepository {
     client: PrismaClientLike,
     payload: { userId: bigint; username: string; robloxUserId?: bigint | null },
   ): Promise<{ id: number; robloxUserId: bigint | null }> {
-    const identity = await client.userRobloxIdentity.upsert({
+    // FIX: Explicitly reuse PrismaClient delegate typing to access model upserts from union client sources.
+    const prisma = client as PrismaClient;
+
+    const identity = await prisma.userRobloxIdentity.upsert({
       where: { userId_robloxUsername: { userId: payload.userId, robloxUsername: payload.username } },
       update: {
         robloxUserId:
