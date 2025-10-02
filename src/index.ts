@@ -13,6 +13,7 @@ import { commandRegistry } from '@/presentation/commands';
 import { type AnyEventDescriptor, events } from '@/presentation/events';
 import { env } from '@/shared/config/env';
 import { logger } from '@/shared/logger/pino';
+import { versionInfo } from '@/shared/version';
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent],
@@ -37,7 +38,11 @@ const registerEvent = (descriptor: AnyEventDescriptor): void => {
 };
 
 const bootstrap = async (): Promise<void> => {
-  logger.info({ env: env.NODE_ENV }, 'Iniciando Dedos Bot...');
+  logger.info({
+    env: env.NODE_ENV,
+    version: versionInfo.version,
+    startedAt: versionInfo.startedAtIso,
+  }, 'Iniciando Dedos Bot. Cada cambio corresponde a una nueva versión.');
 
   await ensureDatabaseConnection();
 

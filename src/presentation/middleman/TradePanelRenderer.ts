@@ -21,20 +21,22 @@ const hasDescriptionMetadata = (
 
 const formatTradeSummary = (trade: Trade | undefined): string => {
   if (!trade) {
-    return '• Datos: ❌ Sin registrar\n• Confirmación: ⏳ Pendiente';
+    return [
+      '• Roblox: ❌ Sin registrar',
+      '• Oferta: ❌ Sin registrar',
+      '• Confirmación: ⏳ Pendiente',
+    ].join('\n');
   }
 
   const metadata = trade.items[0]?.metadata;
   const rawDescription = hasDescriptionMetadata(metadata) ? metadata.description : null;
-  const description = typeof rawDescription === 'string' ? rawDescription : null;
+  const description = typeof rawDescription === 'string' ? rawDescription.trim() : null;
 
   return [
     `• Roblox: **${trade.robloxUsername}**`,
-    description ? `• Oferta: ${String(description)}` : null,
+    description ? `• Oferta: ${description}` : '• Oferta: ❌ Sin registrar',
     `• Confirmación: ${trade.confirmed ? '✅ Registrada' : '⏳ Pendiente'}`,
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ].join('\n');
 };
 
 const resolvePartnerId = (
