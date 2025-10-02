@@ -4,6 +4,7 @@
 
 import {
   ActionRowBuilder,
+  MessageFlags,
   ModalBuilder,
   type ModalSubmitInteraction,
   type TextChannel,
@@ -69,7 +70,7 @@ export class MiddlemanModal {
             description: 'Este formulario solo puede utilizarse dentro de un servidor de Discord.',
           }),
         ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
@@ -87,12 +88,12 @@ export class MiddlemanModal {
               'El bot no tiene configurada la categoría de middleman. Un administrador debe definir `MIDDLEMAN_CATEGORY_ID` en el archivo .env.',
           }),
         ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
       return;
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
       const { ticket, channel } = await useCase.execute(
@@ -143,7 +144,7 @@ export class MiddlemanModal {
       };
 
       if (interaction.deferred || interaction.replied) {
-        const { ephemeral, flags, ...editPayload } = payload;
+        const { flags, ...editPayload } = payload;
         await interaction.editReply(editPayload);
       } else {
         await interaction.reply(payload);

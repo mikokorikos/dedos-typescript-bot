@@ -5,6 +5,7 @@
 import pinoLogger, { type Bindings, type Logger, type LoggerOptions } from 'pino';
 
 import { env } from '@/shared/config/env';
+import { stripDiacriticsDeep } from '@/shared/utils/text';
 
 const isDevelopment = env.NODE_ENV === 'development';
 
@@ -29,6 +30,15 @@ if (isDevelopment) {
     },
   };
 }
+
+const sanitizeArgs = (args: unknown[]): unknown[] => args.map((value) => stripDiacriticsDeep(value));
+
+options.hooks = {
+  logMethod(args, method) {
+    const sanitizedArgs = sanitizeArgs(args);
+    return Reflect.apply(method, this, sanitizedArgs);
+  },
+};
 
 export const logger = pinoLogger(options);
 

@@ -9,7 +9,7 @@ import type {
   ModalSubmitInteraction,
   StringSelectMenuInteraction,
 } from 'discord.js';
-import { Events } from 'discord.js';
+import { Events, MessageFlags } from 'discord.js';
 
 import { commandRegistry } from '@/presentation/commands';
 import {
@@ -34,7 +34,7 @@ const handleChatInput = async (interaction: ChatInputCommandInteraction): Promis
           description: 'El comando solicitado ya no está registrado. Usa `/help` para ver la lista actual.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -55,7 +55,7 @@ const handleButton = async (interaction: ButtonInteraction): Promise<void> => {
             'Este botón ya no está activo. Recarga la interfaz o ejecuta nuevamente el comando para obtener una versión actualizada.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -75,7 +75,7 @@ const handleModal = async (interaction: ModalSubmitInteraction): Promise<void> =
           description: 'Este formulario ya no es válido. Intenta ejecutar nuevamente el flujo desde el comando original.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -96,7 +96,7 @@ const handleSelectMenu = async (interaction: StringSelectMenuInteraction): Promi
             'Este menú ya no está activo. Vuelve a ejecutar el comando para obtener una versión actualizada.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }

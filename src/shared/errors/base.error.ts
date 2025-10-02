@@ -2,6 +2,8 @@
 // RUTA: src/shared/errors/base.error.ts
 // ============================================================================
 
+import { stripDiacritics, stripDiacriticsDeep } from '@/shared/utils/text';
+
 export interface DedosErrorOptions {
   readonly code: string;
   readonly message: string;
@@ -18,14 +20,17 @@ export class DedosError extends Error {
   public readonly exposeMessage: boolean;
 
   public constructor(options: DedosErrorOptions) {
-    super(options.message);
+    const sanitizedMessage = stripDiacritics(options.message);
+    const sanitizedMetadata = options.metadata ? stripDiacriticsDeep(options.metadata) : undefined;
+
+    super(sanitizedMessage);
     this.name = 'DedosError';
     this.code = options.code;
-    this.metadata = options.metadata ?? {};
+    this.metadata = sanitizedMetadata ?? {};
     this.exposeMessage = options.exposeMessage ?? false;
 
     if (options.cause) {
-      this.cause = options.cause;
+      this.cause = stripDiacriticsDeep(options.cause);
     }
 
     Error.captureStackTrace?.(this, DedosError);

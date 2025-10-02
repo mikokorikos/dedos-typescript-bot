@@ -2,7 +2,8 @@
 // RUTA: src/presentation/commands/middleman/middleman.ts
 // ============================================================================
 
-import { ChannelType, type ChatInputCommandInteraction, SlashCommandBuilder, type TextChannel } from 'discord.js';
+import type { ChatInputCommandInteraction, TextChannel } from 'discord.js';
+import { ChannelType, MessageFlags, SlashCommandBuilder } from 'discord.js';
 
 import { reviewInviteStore } from '@/application/services/ReviewInviteStore';
 import { ClaimTradeUseCase } from '@/application/usecases/middleman/ClaimTradeUseCase';
@@ -78,7 +79,7 @@ registerModalHandler(TradeModal.CUSTOM_ID, async (interaction) => {
           description: 'Este formulario solo puede utilizarse dentro de un canal de texto.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -108,7 +109,7 @@ registerModalHandler(TradeModal.CUSTOM_ID, async (interaction) => {
           description: 'Tu información del trade se actualizó correctamente.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   } catch (error) {
     const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
@@ -120,7 +121,7 @@ registerModalHandler(TradeModal.CUSTOM_ID, async (interaction) => {
     }
 
     if (interaction.deferred || interaction.replied) {
-      const { ephemeral, flags, ...editPayload } = payload;
+      const { flags, ...editPayload } = payload;
       await interaction.editReply({
         ...editPayload,
         embeds:
@@ -143,7 +144,7 @@ registerModalHandler(TradeModal.CUSTOM_ID, async (interaction) => {
             description: 'Inténtalo nuevamente más tarde o contacta al staff.',
           }),
         ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 });
@@ -159,7 +160,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           description: 'Esta invitación de reseña ha expirado. Solicita al staff que envíe una nueva.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -173,7 +174,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           description: 'Solo los participantes del ticket pueden enviar una reseña.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -197,7 +198,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
                 'No se pudo encontrar el canal de reseñas. Un administrador debe establecer `REVIEW_CHANNEL_ID` en el .env.',
             }),
           ],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -212,7 +213,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
               description: 'El canal de reseñas configurado no es un canal de texto válido.',
             }),
           ],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
         return;
       }
@@ -235,7 +236,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
             description: 'Tu valoración se ha publicado correctamente en el canal de reseñas.',
           }),
         ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     } catch (error) {
       const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
@@ -255,7 +256,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
               description: 'Ocurrió un error al procesar tu reseña. Inténtalo nuevamente en unos minutos.',
             }),
           ],
-        ephemeral: true,
+        flags: MessageFlags.Ephemeral,
       });
     } finally {
       modalHandlers.delete(modalCustomId);
@@ -274,7 +275,7 @@ registerButtonHandler(TRADE_DATA_BUTTON_ID, async (interaction) => {
           description: 'Este botón solo funciona dentro de un canal de trade.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -293,7 +294,7 @@ registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
           description: 'Este botón solo funciona dentro de un canal de trade.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -319,7 +320,7 @@ registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
           description: 'Tu confirmación quedó registrada correctamente.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
 
     if (result.ticketConfirmed) {
@@ -339,7 +340,7 @@ registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
     }
 
     if (interaction.deferred || interaction.replied) {
-      const { ephemeral, flags, ...editPayload } = payload;
+      const { flags, ...editPayload } = payload;
       await interaction.editReply({
         ...editPayload,
         embeds:
@@ -362,7 +363,7 @@ registerButtonHandler(TRADE_CONFIRM_BUTTON_ID, async (interaction) => {
             description: 'Inténtalo nuevamente o contacta al staff.',
           }),
         ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
   }
 });
@@ -376,7 +377,7 @@ registerButtonHandler(TRADE_HELP_BUTTON_ID, async (interaction) => {
           description: 'Este botón solo funciona dentro de un canal de trade.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -388,7 +389,7 @@ registerButtonHandler(TRADE_HELP_BUTTON_ID, async (interaction) => {
         description: 'Se notificó al equipo middleman. Por favor, espera en el canal.',
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 
   const mention = env.MIDDLEMAN_ROLE_ID ? `<@&${env.MIDDLEMAN_ROLE_ID}>` : 'Equipo middleman';
@@ -407,7 +408,7 @@ registerSelectMenuHandler(MIDDLEMAN_PANEL_MENU_ID, async (interaction) => {
           description: 'Este menú solo puede utilizarse dentro de un servidor.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -417,7 +418,7 @@ registerSelectMenuHandler(MIDDLEMAN_PANEL_MENU_ID, async (interaction) => {
   if (value === 'info') {
     await interaction.reply({
       embeds: [buildMiddlemanInfoEmbed()],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -434,7 +435,7 @@ registerSelectMenuHandler(MIDDLEMAN_PANEL_MENU_ID, async (interaction) => {
         description: 'Selecciona una opción válida del menú para continuar.',
       }),
     ],
-    ephemeral: true,
+    flags: MessageFlags.Ephemeral,
   });
 });
 
@@ -461,7 +462,7 @@ const handleOpen = async (interaction: ChatInputCommandInteraction): Promise<voi
           description: 'Este comando solo puede utilizarse dentro de un servidor.',
         }),
       ],
-      ephemeral: true,
+      flags: MessageFlags.Ephemeral,
     });
     return;
   }
@@ -486,7 +487,7 @@ const handleClaim = async (interaction: ChatInputCommandInteraction): Promise<vo
     throw new TicketNotFoundError(channel.id);
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await claimUseCase.execute({ ticketId: ticket.id, middlemanId: interaction.user.id }, channel);
 
   await interaction.editReply({
@@ -507,7 +508,7 @@ const handleClose = async (interaction: ChatInputCommandInteraction): Promise<vo
     throw new TicketNotFoundError(channel.id);
   }
 
-  await interaction.deferReply({ ephemeral: true });
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   await closeUseCase.execute(ticket.id, BigInt(interaction.user.id), channel);
 
   const participants = await ticketRepo.listParticipants(ticket.id);
@@ -608,7 +609,7 @@ export const middlemanCommand: Command = {
               description: 'La acción solicitada no está implementada.',
             }),
           ],
-          ephemeral: true,
+          flags: MessageFlags.Ephemeral,
         });
     }
   },
