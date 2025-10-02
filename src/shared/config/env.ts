@@ -79,6 +79,7 @@ export const EnvSchema = z.object({
     .optional()
     .default(';'),
   DATABASE_URL: z.string().url('DATABASE_URL debe ser una URL válida'),
+  DB_AUTO_APPLY_SCHEMA: booleanLike.default(true),
   MIDDLEMAN_CATEGORY_ID: z
     .string()
     .regex(/^\d{17,20}$/u, 'MIDDLEMAN_CATEGORY_ID debe ser un snowflake de Discord')
