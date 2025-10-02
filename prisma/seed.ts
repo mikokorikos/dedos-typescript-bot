@@ -13,47 +13,120 @@ async function main(): Promise<void> {
   const ownerId = BigInt('111111111111111111');
   const partnerId = BigInt('222222222222222222');
   const middlemanId = BigInt('333333333333333333');
+  const guildId = BigInt('444444444444444444');
 
   const owner = await prisma.user.upsert({
     where: { id: ownerId },
-    update: {},
+    update: {
+      username: 'owner',
+      discriminator: '0001',
+      globalName: 'Owner',
+      lastSeenAt: new Date(),
+    },
     create: {
       id: ownerId,
-      robloxId: BigInt('900100200'),
+      username: 'owner',
+      discriminator: '0001',
+      globalName: 'Owner',
     },
   });
 
   const partner = await prisma.user.upsert({
     where: { id: partnerId },
-    update: {},
+    update: {
+      username: 'partner',
+      discriminator: '0002',
+      globalName: 'Partner',
+      lastSeenAt: new Date(),
+    },
     create: {
       id: partnerId,
-      robloxId: BigInt('900100201'),
+      username: 'partner',
+      discriminator: '0002',
+      globalName: 'Partner',
     },
   });
 
   const middlemanUser = await prisma.user.upsert({
     where: { id: middlemanId },
-    update: {},
+    update: {
+      username: 'middleman',
+      discriminator: '0003',
+      globalName: 'Middleman',
+      lastSeenAt: new Date(),
+    },
     create: {
       id: middlemanId,
-      robloxId: BigInt('900100202'),
+      username: 'middleman',
+      discriminator: '0003',
+      globalName: 'Middleman',
+    },
+  });
+
+  await prisma.guildMember.upsert({
+    where: { guildId_userId: { guildId, userId: ownerId } },
+    update: { nickname: 'Owner', lastSeenAt: new Date(), roles: ['OWNER', 'TRADER'] },
+    create: {
+      guildId,
+      userId: ownerId,
+      nickname: 'Owner',
+      joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30),
+      roles: ['OWNER', 'TRADER'],
+    },
+  });
+
+  await prisma.guildMember.upsert({
+    where: { guildId_userId: { guildId, userId: partnerId } },
+    update: { nickname: 'Partner', lastSeenAt: new Date(), roles: ['PARTNER'] },
+    create: {
+      guildId,
+      userId: partnerId,
+      nickname: 'Partner',
+      joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 15),
+      roles: ['PARTNER'],
+    },
+  });
+
+  await prisma.guildMember.upsert({
+    where: { guildId_userId: { guildId, userId: middlemanId } },
+    update: { nickname: 'Dedos Middleman', lastSeenAt: new Date(), roles: ['MIDDLEMAN'] },
+    create: {
+      guildId,
+      userId: middlemanId,
+      nickname: 'Dedos Middleman',
+      joinedAt: new Date(Date.now() - 1000 * 60 * 60 * 24 * 120),
+      roles: ['MIDDLEMAN'],
+    },
+  });
+
+  const middlemanIdentity = await prisma.userRobloxIdentity.upsert({
+    where: { userId_robloxUsername: { userId: middlemanId, robloxUsername: 'DedosMiddleman' } },
+    update: {
+      robloxUserId: BigInt('900100202'),
+      verified: true,
+      lastUsedAt: new Date(),
+    },
+    create: {
+      userId: middlemanId,
+      robloxUsername: 'DedosMiddleman',
+      robloxUserId: BigInt('900100202'),
+      verified: true,
+      lastUsedAt: new Date(),
     },
   });
 
   await prisma.middleman.upsert({
     where: { userId: middlemanId },
-    update: {},
+    update: { primaryRobloxIdentityId: middlemanIdentity.id },
     create: {
       userId: middlemanId,
-      robloxUsername: 'DedosMiddleman',
-      robloxUserId: BigInt('900100202'),
+      primaryRobloxIdentityId: middlemanIdentity.id,
     },
   });
 
   const ticket = await prisma.ticket.create({
     data: {
-      guildId: BigInt('444444444444444444'),
+      guildId,
       channelId: BigInt('555555555555555555'),
       ownerId: owner.id,
       type: TicketType.MM,
@@ -91,13 +164,17 @@ async function main(): Promise<void> {
 
   await prisma.memberTradeStats.upsert({
     where: { userId: middlemanId },
-    update: { tradesCompleted: { increment: 5 }, lastTradeAt: new Date(), partnerTag: 'Trusted Partner' },
+    update: {
+      tradesCompleted: { increment: 5 },
+      lastTradeAt: new Date(),
+      partnerTag: 'Trusted Partner',
+      preferredRobloxIdentityId: middlemanIdentity.id,
+    },
     create: {
       userId: middlemanId,
       tradesCompleted: 5,
       lastTradeAt: new Date(),
-      robloxUsername: 'DedosMiddleman',
-      robloxUserId: BigInt('900100202'),
+      preferredRobloxIdentityId: middlemanIdentity.id,
       partnerTag: 'Trusted Partner',
     },
   });

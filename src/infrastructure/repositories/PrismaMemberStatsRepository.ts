@@ -6,6 +6,7 @@ import type { Prisma, PrismaClient } from '@prisma/client';
 
 import type { IMemberStatsRepository } from '@/domain/repositories/IMemberStatsRepository';
 import type { TransactionContext } from '@/domain/repositories/transaction';
+import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
 type PrismaClientLike = PrismaClient | Prisma.TransactionClient;
 
@@ -21,6 +22,8 @@ export class PrismaMemberStatsRepository implements IMemberStatsRepository {
   }
 
   public async recordCompletedTrade(userId: bigint, completedAt: Date): Promise<void> {
+    await ensureUsersExist(this.prisma, [userId]);
+
     await this.prisma.memberTradeStats.upsert({
       where: { userId },
       create: {

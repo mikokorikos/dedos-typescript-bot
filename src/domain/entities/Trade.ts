@@ -15,6 +15,7 @@ export class Trade {
     public readonly userId: bigint,
     public robloxUsername: string,
     public robloxUserId: bigint | null,
+    public robloxIdentityId: number | null,
     public status: TradeStatus,
     public confirmed: boolean,
     items: TradeItem[],
@@ -83,13 +84,19 @@ export class Trade {
     this.status = TradeStatus.PENDING;
   }
 
-  public updateRobloxProfile(details: { username?: string; userId?: bigint | null }): void {
+  public updateRobloxProfile(details: { username?: string; userId?: bigint | null; identityId?: number | null }): void {
     if (details.username) {
       this.robloxUsername = details.username;
     }
 
     if (details.userId !== undefined) {
       this.robloxUserId = details.userId;
+    }
+
+    if (details.identityId !== undefined) {
+      this.robloxIdentityId = details.identityId ?? null;
+    } else if (details.username) {
+      this.robloxIdentityId = null;
     }
   }
 

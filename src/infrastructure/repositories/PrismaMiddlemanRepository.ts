@@ -10,6 +10,7 @@ import type {
   MiddlemanProfile,
 } from '@/domain/repositories/IMiddlemanRepository';
 import type { TransactionContext } from '@/domain/repositories/transaction';
+import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
 type PrismaClientLike = PrismaClient | Prisma.TransactionClient;
 
@@ -62,18 +63,34 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     });
   }
 
-  public async upsertProfile(data: { userId: bigint; robloxUsername: string; robloxUserId?: bigint | null }): Promise<void> {
-    await this.prisma.middleman.upsert({
-      where: { userId: data.userId },
+  public async upsertProfile(data: {
+    userId: bigint;
+    robloxUsername: string;
+    robloxUserId?: bigint | null;
+    verified?: boolean;
+  }): Promise<void> {
+    await ensureUsersExist(this.prisma, [data.userId]);
+
+    const identity = await this.prisma.userRobloxIdentity.upsert({
+      where: { userId_robloxUsername: { userId: data.userId, robloxUsername: data.robloxUsername } },
       update: {
-        robloxUsername: data.robloxUsername,
-        robloxUserId: data.robloxUserId ?? null,
+        robloxUserId: data.robloxUserId === undefined ? undefined : data.robloxUserId ?? null,
+        verified: data.verified ?? undefined,
+        lastUsedAt: new Date(),
       },
       create: {
         userId: data.userId,
         robloxUsername: data.robloxUsername,
         robloxUserId: data.robloxUserId ?? null,
+        verified: data.verified ?? false,
+        lastUsedAt: new Date(),
       },
+    });
+
+    await this.prisma.middleman.upsert({
+      where: { userId: data.userId },
+      update: { primaryRobloxIdentityId: identity.id },
+      create: { userId: data.userId, primaryRobloxIdentityId: identity.id },
     });
   }
 
@@ -81,43 +98,100 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     userId: bigint;
     robloxUsername?: string | null;
     robloxUserId?: bigint | null;
+    verified?: boolean;
   }): Promise<void> {
-    try {
+    await ensureUsersExist(this.prisma, [data.userId]);
+
+    const middleman = await this.prisma.middleman.findUnique({
+      where: { userId: data.userId },
+      select: { primaryRobloxIdentityId: true },
+    });
+
+    if (!middleman) {
+      await this.upsertProfile({
+        userId: data.userId,
+        robloxUsername: data.robloxUsername ?? 'Sin registrar',
+        robloxUserId: data.robloxUserId ?? null,
+        verified: data.verified,
+      });
+      return;
+    }
+
+    if (data.robloxUsername === null) {
       await this.prisma.middleman.update({
         where: { userId: data.userId },
-        data: {
-          robloxUsername: data.robloxUsername ?? undefined,
-          robloxUserId: data.robloxUserId ?? undefined,
+        data: { primaryRobloxIdentityId: null },
+      });
+      return;
+    }
+
+    if (data.robloxUsername !== undefined) {
+      const identity = await this.prisma.userRobloxIdentity.upsert({
+        where: {
+          userId_robloxUsername: {
+            userId: data.userId,
+            robloxUsername: data.robloxUsername,
+          },
+        },
+        update: {
+          robloxUserId: data.robloxUserId === undefined ? undefined : data.robloxUserId ?? null,
+          verified: data.verified ?? undefined,
+          lastUsedAt: new Date(),
+        },
+        create: {
+          userId: data.userId,
+          robloxUsername: data.robloxUsername,
+          robloxUserId: data.robloxUserId ?? null,
+          verified: data.verified ?? false,
+          lastUsedAt: new Date(),
         },
       });
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        await this.upsertProfile({
-          userId: data.userId,
-          robloxUsername: data.robloxUsername ?? 'Sin registrar',
-          robloxUserId: data.robloxUserId ?? null,
-        });
-        return;
-      }
 
-      throw error;
+      await this.prisma.middleman.update({
+        where: { userId: data.userId },
+        data: { primaryRobloxIdentityId: identity.id },
+      });
+
+      return;
     }
+
+    if (middleman.primaryRobloxIdentityId === null) {
+      return;
+    }
+
+    await this.prisma.userRobloxIdentity.update({
+      where: { id: middleman.primaryRobloxIdentityId },
+      data: {
+        robloxUserId: data.robloxUserId === undefined ? undefined : data.robloxUserId ?? null,
+        verified: data.verified ?? undefined,
+        lastUsedAt: new Date(),
+      },
+    });
   }
 
   public async getProfile(userId: bigint): Promise<MiddlemanProfile | null> {
     const rows = await this.prisma.$queryRaw<Array<{
       user_id: bigint;
-      roblox_username: string;
-      roblox_user_id: bigint | null;
+      identity_id: number | null;
+      identity_username: string | null;
+      identity_user_id: bigint | null;
+      identity_verified: boolean | null;
+      identity_last_used_at: Date | null;
       vouches_count: bigint | number | null;
       rating_sum: bigint | number | null;
       rating_count: bigint | number | null;
     }>>`
-      SELECT m.user_id, m.roblox_username, m.roblox_user_id,
+      SELECT m.user_id,
+        pri.id AS identity_id,
+        pri.roblox_username AS identity_username,
+        pri.roblox_user_id AS identity_user_id,
+        pri.verified AS identity_verified,
+        pri.last_used_at AS identity_last_used_at,
         COALESCE(vc.vouches_count, 0) AS vouches_count,
         COALESCE(rr.rating_sum, 0) AS rating_sum,
         COALESCE(rr.rating_count, 0) AS rating_count
       FROM middlemen m
+      LEFT JOIN user_roblox_identities pri ON pri.id = m.primary_roblox_identity_id
       LEFT JOIN (
         SELECT middleman_id, COUNT(*) AS vouches_count
         FROM mm_claims
@@ -142,21 +216,39 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
 
     const rows = await this.prisma.$queryRaw<Array<{
       user_id: bigint;
-      roblox_username: string;
-      roblox_user_id: bigint | null;
+      identity_id: number | null;
+      identity_username: string | null;
+      identity_user_id: bigint | null;
+      identity_verified: boolean | null;
+      identity_last_used_at: Date | null;
       vouches_count: bigint | number | null;
       rating_sum: bigint | number | null;
       rating_count: bigint | number | null;
+      updated_at: Date;
     }>>`
-      SELECT stats.user_id, stats.roblox_username, stats.roblox_user_id,
-        stats.vouches_count, stats.rating_sum, stats.rating_count
+      SELECT stats.user_id,
+        stats.identity_id,
+        stats.identity_username,
+        stats.identity_user_id,
+        stats.identity_verified,
+        stats.identity_last_used_at,
+        stats.vouches_count,
+        stats.rating_sum,
+        stats.rating_count,
+        stats.updated_at
       FROM (
-        SELECT m.user_id, m.roblox_username, m.roblox_user_id,
+        SELECT m.user_id,
+          pri.id AS identity_id,
+          pri.roblox_username AS identity_username,
+          pri.roblox_user_id AS identity_user_id,
+          pri.verified AS identity_verified,
+          pri.last_used_at AS identity_last_used_at,
           COALESCE(vc.vouches_count, 0) AS vouches_count,
           COALESCE(rr.rating_sum, 0) AS rating_sum,
           COALESCE(rr.rating_count, 0) AS rating_count,
           m.updated_at
         FROM middlemen m
+        LEFT JOIN user_roblox_identities pri ON pri.id = m.primary_roblox_identity_id
         LEFT JOIN (
           SELECT middleman_id, COUNT(*) AS vouches_count
           FROM mm_claims
@@ -196,16 +288,29 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
 
   private static mapProfile(row: {
     user_id: bigint;
-    roblox_username: string;
-    roblox_user_id: bigint | null;
+    identity_id: number | null;
+    identity_username: string | null;
+    identity_user_id: bigint | null;
+    identity_verified: boolean | null;
+    identity_last_used_at: Date | null;
     vouches_count: bigint | number | null;
     rating_sum: bigint | number | null;
     rating_count: bigint | number | null;
   }): MiddlemanProfile {
+    const primaryIdentity =
+      row.identity_id === null || row.identity_username === null
+        ? null
+        : {
+            id: row.identity_id,
+            username: row.identity_username,
+            robloxUserId: row.identity_user_id,
+            verified: Boolean(row.identity_verified),
+            lastUsedAt: row.identity_last_used_at ?? null,
+          };
+
     return {
       userId: row.user_id,
-      robloxUsername: row.roblox_username,
-      robloxUserId: row.roblox_user_id,
+      primaryIdentity,
       vouches: Number(row.vouches_count ?? 0),
       ratingSum: Number(row.rating_sum ?? 0),
       ratingCount: Number(row.rating_count ?? 0),

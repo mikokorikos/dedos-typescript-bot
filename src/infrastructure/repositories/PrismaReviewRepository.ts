@@ -8,6 +8,7 @@ import { Review } from '@/domain/entities/Review';
 import type { CreateReviewData, IReviewRepository } from '@/domain/repositories/IReviewRepository';
 import type { TransactionContext } from '@/domain/repositories/transaction';
 import { Rating } from '@/domain/value-objects/Rating';
+import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
 type PrismaClientLike = PrismaClient | Prisma.TransactionClient;
 
@@ -25,6 +26,8 @@ export class PrismaReviewRepository implements IReviewRepository {
   }
 
   public async create(data: CreateReviewData): Promise<Review> {
+    await ensureUsersExist(this.prisma, [data.reviewerId]);
+
     const review = await this.prisma.middlemanReview.create({
       data: {
         ticketId: data.ticketId,

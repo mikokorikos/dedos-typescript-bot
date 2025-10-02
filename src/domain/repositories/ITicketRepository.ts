@@ -5,6 +5,7 @@
 import type { Ticket } from '@/domain/entities/Ticket';
 import type { TicketStatus, TicketType } from '@/domain/entities/types';
 import type { Transactional } from '@/domain/repositories/transaction';
+import type { DiscordUserSnapshot } from '@/shared/types/discord';
 
 export interface TicketParticipantInput {
   readonly userId: bigint;
@@ -19,6 +20,7 @@ export interface CreateTicketData {
   readonly type: TicketType;
   readonly status?: TicketStatus;
   readonly participants?: ReadonlyArray<TicketParticipantInput>;
+  readonly userSnapshots?: ReadonlyArray<DiscordUserSnapshot>;
 }
 
 export interface ITicketRepository extends Transactional<ITicketRepository> {
