@@ -3,7 +3,7 @@
 // ============================================================================
 
 import type { Guild, GuildMember, TextChannel } from 'discord.js';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import type { Logger } from 'pino';
 
 import type { Ticket } from '@/domain/entities/Ticket';
@@ -89,6 +89,7 @@ export class OpenSupportTicketUseCase {
           {
             id: guild.roles.everyone.id,
             deny: [PermissionFlagsBits.ViewChannel],
+            type: OverwriteType.Role,
           },
           {
             id: member.id,
@@ -97,6 +98,7 @@ export class OpenSupportTicketUseCase {
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Member,
           },
           ...this.options.staffRoleIds.map((roleId) => ({
             id: roleId,
@@ -105,6 +107,7 @@ export class OpenSupportTicketUseCase {
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Role,
           })),
           {
             id: botId,
@@ -114,6 +117,7 @@ export class OpenSupportTicketUseCase {
               PermissionFlagsBits.ManageChannels,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Member,
           },
         ],
       });
