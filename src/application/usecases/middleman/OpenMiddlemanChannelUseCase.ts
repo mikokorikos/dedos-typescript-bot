@@ -3,7 +3,7 @@
 // ============================================================================
 
 import type { Guild, TextChannel } from 'discord.js';
-import { ChannelType, PermissionFlagsBits } from 'discord.js';
+import { ChannelType, OverwriteType, PermissionFlagsBits } from 'discord.js';
 import type { Logger } from 'pino';
 
 import { type CreateMiddlemanTicketDTO,CreateMiddlemanTicketSchema } from '@/application/dto/ticket.dto';
@@ -89,6 +89,7 @@ export class OpenMiddlemanChannelUseCase {
           {
             id: guild.roles.everyone.id,
             deny: [PermissionFlagsBits.ViewChannel],
+            type: OverwriteType.Role,
           },
           {
             id: payload.userId,
@@ -97,6 +98,7 @@ export class OpenMiddlemanChannelUseCase {
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Member,
           },
           {
             id: partnerId.toString(),
@@ -105,6 +107,7 @@ export class OpenMiddlemanChannelUseCase {
               PermissionFlagsBits.SendMessages,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Member,
           },
           {
             id: botId,
@@ -114,6 +117,7 @@ export class OpenMiddlemanChannelUseCase {
               PermissionFlagsBits.ManageChannels,
               PermissionFlagsBits.ReadMessageHistory,
             ],
+            type: OverwriteType.Member,
           },
         ],
       });
