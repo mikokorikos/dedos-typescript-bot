@@ -86,9 +86,11 @@ export class TradePanelRenderer {
       ].join('\n\n'),
     });
 
+    const canConfirm = Boolean(ownerTrade && partnerTrade && !everyoneConfirmed);
+
     const payload: Parameters<TextChannel['send']>[0] = {
       embeds: [embed],
-      components: [buildTradePanelButtons()],
+      components: [buildTradePanelButtons({ canConfirm })],
       allowedMentions: { parse: [] },
     };
 
