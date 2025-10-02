@@ -19,6 +19,11 @@ type PrismaClaim = Prisma.MiddlemanClaimGetPayload<Record<string, never>>;
 export class PrismaMiddlemanRepository implements IMiddlemanRepository {
   public constructor(private readonly prisma: PrismaClientLike) {}
 
+  private get prismaClient(): PrismaClient {
+    // FIX: Narrow union type to reuse strongly typed Prisma delegates during repository operations.
+    return this.prisma as PrismaClient;
+  }
+
   public withTransaction(context: TransactionContext): IMiddlemanRepository {
     if (!PrismaMiddlemanRepository.isTransactionClient(context)) {
       throw new Error('Invalid Prisma transaction context provided to middleman repository.');
@@ -71,7 +76,9 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
   }): Promise<void> {
     await ensureUsersExist(this.prisma, [data.userId]);
 
-    const identity = await this.prisma.userRobloxIdentity.upsert({
+    const prisma = this.prismaClient;
+
+    const identity = await prisma.userRobloxIdentity.upsert({
       where: { userId_robloxUsername: { userId: data.userId, robloxUsername: data.robloxUsername } },
       update: {
         robloxUserId: data.robloxUserId === undefined ? undefined : data.robloxUserId ?? null,
@@ -87,7 +94,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       },
     });
 
-    await this.prisma.middleman.upsert({
+    await prisma.middleman.upsert({
       where: { userId: data.userId },
       update: { primaryRobloxIdentityId: identity.id },
       create: { userId: data.userId, primaryRobloxIdentityId: identity.id },
@@ -102,7 +109,9 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
   }): Promise<void> {
     await ensureUsersExist(this.prisma, [data.userId]);
 
-    const middleman = await this.prisma.middleman.findUnique({
+    const prisma = this.prismaClient;
+
+    const middleman = await prisma.middleman.findUnique({
       where: { userId: data.userId },
       select: { primaryRobloxIdentityId: true },
     });
@@ -118,7 +127,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     }
 
     if (data.robloxUsername === null) {
-      await this.prisma.middleman.update({
+      await prisma.middleman.update({
         where: { userId: data.userId },
         data: { primaryRobloxIdentityId: null },
       });
@@ -126,7 +135,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     }
 
     if (data.robloxUsername !== undefined) {
-      const identity = await this.prisma.userRobloxIdentity.upsert({
+      const identity = await prisma.userRobloxIdentity.upsert({
         where: {
           userId_robloxUsername: {
             userId: data.userId,
@@ -147,7 +156,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
         },
       });
 
-      await this.prisma.middleman.update({
+      await prisma.middleman.update({
         where: { userId: data.userId },
         data: { primaryRobloxIdentityId: identity.id },
       });
@@ -159,7 +168,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       return;
     }
 
-    await this.prisma.userRobloxIdentity.update({
+    await prisma.userRobloxIdentity.update({
       where: { id: middleman.primaryRobloxIdentityId },
       data: {
         robloxUserId: data.robloxUserId === undefined ? undefined : data.robloxUserId ?? null,
@@ -170,7 +179,9 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
   }
 
   public async getProfile(userId: bigint): Promise<MiddlemanProfile | null> {
-    const rows = await this.prisma.$queryRaw<Array<{
+    const prisma = this.prismaClient;
+
+    const rows = await prisma.$queryRaw<Array<{
       user_id: bigint;
       identity_id: number | null;
       identity_username: string | null;
@@ -214,7 +225,9 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
   public async listTopProfiles(limit = 10): Promise<readonly MiddlemanProfile[]> {
     const safeLimit = Math.max(1, Math.min(50, Number.isFinite(limit) ? Number(limit) : 10));
 
-    const rows = await this.prisma.$queryRaw<Array<{
+    const prisma = this.prismaClient;
+
+    const rows = await prisma.$queryRaw<Array<{
       user_id: bigint;
       identity_id: number | null;
       identity_username: string | null;

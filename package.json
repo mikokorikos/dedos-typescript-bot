@@ -33,7 +33,8 @@
     "migrate:from-old": "tsx scripts/migrate-from-old-db.ts",
     "docker:up": "docker-compose up -d",
     "docker:down": "docker-compose down",
-    "prepare": "husky install"
+    "prepare": "husky install",
+    "postinstall": "prisma generate"
   },
   "lint-staged": {
     "*.{ts,tsx}": [
