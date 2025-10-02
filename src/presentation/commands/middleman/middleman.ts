@@ -27,8 +27,18 @@ import {
 import { MiddlemanModal } from '@/presentation/components/modals/MiddlemanModal';
 import { ReviewModal } from '@/presentation/components/modals/ReviewModal';
 import { TradeModal } from '@/presentation/components/modals/TradeModal';
-import { modalHandlers, registerButtonHandler, registerModalHandler } from '@/presentation/components/registry';
+import {
+  modalHandlers,
+  registerButtonHandler,
+  registerModalHandler,
+  registerSelectMenuHandler,
+} from '@/presentation/components/registry';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
+import {
+  buildMiddlemanInfoEmbed,
+  buildMiddlemanPanelMessage,
+  MIDDLEMAN_PANEL_MENU_ID,
+} from '@/presentation/middleman/MiddlemanPanelBuilder';
 import { TradePanelRenderer } from '@/presentation/middleman/TradePanelRenderer';
 import { env } from '@/shared/config/env';
 import { mapErrorToDiscordResponse } from '@/shared/errors/discord-error-mapper';
@@ -388,6 +398,46 @@ registerButtonHandler(TRADE_HELP_BUTTON_ID, async (interaction) => {
   });
 });
 
+registerSelectMenuHandler(MIDDLEMAN_PANEL_MENU_ID, async (interaction) => {
+  if (!interaction.guild) {
+    await interaction.reply({
+      embeds: [
+        embedFactory.error({
+          title: 'Acción no disponible',
+          description: 'Este menú solo puede utilizarse dentro de un servidor.',
+        }),
+      ],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  const value = interaction.values.at(0);
+
+  if (value === 'info') {
+    await interaction.reply({
+      embeds: [buildMiddlemanInfoEmbed()],
+      ephemeral: true,
+    });
+    return;
+  }
+
+  if (value === 'open') {
+    await interaction.showModal(MiddlemanModal.build());
+    return;
+  }
+
+  await interaction.reply({
+    embeds: [
+      embedFactory.warning({
+        title: 'Opción no reconocida',
+        description: 'Selecciona una opción válida del menú para continuar.',
+      }),
+    ],
+    ephemeral: true,
+  });
+});
+
 const ensureTextChannel = (interaction: ChatInputCommandInteraction): TextChannel => {
   if (!interaction.guild) {
     throw new UnauthorizedActionError('middleman:command:guild-only');
@@ -417,6 +467,15 @@ const handleOpen = async (interaction: ChatInputCommandInteraction): Promise<voi
   }
 
   await interaction.showModal(MiddlemanModal.build());
+};
+
+const handlePanel = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+  const panel = buildMiddlemanPanelMessage();
+
+  await interaction.reply({
+    ...panel,
+    allowedMentions: { parse: [] },
+  });
 };
 
 const handleClaim = async (interaction: ChatInputCommandInteraction): Promise<void> => {
@@ -495,9 +554,36 @@ export const middlemanCommand: Command = {
     .setDescription('Sistema de middleman del servidor')
     .addSubcommand((sub) => sub.setName('open').setDescription('Abrir ticket de middleman'))
     .addSubcommand((sub) => sub.setName('claim').setDescription('Reclamar ticket (solo middlemen)'))
-    .addSubcommand((sub) => sub.setName('close').setDescription('Cerrar ticket (solo middleman asignado)')),
+    .addSubcommand((sub) => sub.setName('close').setDescription('Cerrar ticket (solo middleman asignado)'))
+    .addSubcommand((sub) => sub.setName('panel').setDescription('Publicar el panel informativo de middleman')),
   category: 'Middleman',
-  examples: ['/middleman open', '/middleman claim', '/middleman close'],
+  examples: ['/middleman open', '/middleman claim', '/middleman close', '/middleman panel'],
+  prefix: {
+    name: 'middleman',
+    aliases: ['mm'],
+    async execute(message, args) {
+      const [subcommand] = args;
+
+      if (!subcommand || subcommand.toLowerCase() === 'panel') {
+        const panel = buildMiddlemanPanelMessage();
+        await message.channel.send({
+          ...panel,
+          allowedMentions: { parse: [] },
+        });
+        return;
+      }
+
+      await message.reply({
+        embeds: [
+          embedFactory.info({
+            title: 'Comando disponible como slash',
+            description: 'Usa `/middleman` para acceder al flujo completo de middleman dentro del servidor.',
+          }),
+        ],
+        allowedMentions: { repliedUser: false },
+      });
+    },
+  },
   async execute(interaction) {
     const subcommand = interaction.options.getSubcommand();
 
@@ -510,6 +596,9 @@ export const middlemanCommand: Command = {
         break;
       case 'close':
         await handleClose(interaction);
+        break;
+      case 'panel':
+        await handlePanel(interaction);
         break;
       default:
         await interaction.reply({
