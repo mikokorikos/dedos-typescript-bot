@@ -468,8 +468,43 @@ const loadRemoteImage = async (
   }
 };
 
-const buildRobloxAvatarUrl = (robloxUserId: bigint): string =>
+const buildRobloxAvatarFallbackUrl = (robloxUserId: bigint): string =>
   `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxUserId.toString()}&width=352&height=352&format=png`;
+
+const fetchRobloxAvatarUrl = async (robloxUserId: bigint): Promise<string> => {
+  const apiUrl =
+    'https://thumbnails.roblox.com/v1/users/avatar-headshot?' +
+    `userIds=${robloxUserId.toString()}&size=352x352&format=Png&isCircular=false`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; DedosShopBot/1.0; +https://dedos.xyz)',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      readonly data?: ReadonlyArray<{ imageUrl?: string | null; state?: string | null }>;
+    };
+
+    const entry = data.data?.[0];
+    if (entry?.imageUrl && entry.state !== 'Pending') {
+      return entry.imageUrl;
+    }
+  } catch (error) {
+    logger.warn(
+      { err: error, robloxUserId: robloxUserId.toString() },
+      'No se pudo obtener la imagen de Roblox desde thumbnails.roblox.com.',
+    );
+  }
+
+  return buildRobloxAvatarFallbackUrl(robloxUserId);
+};
 
 const getImageMetrics = (
   image: CanvasImageSource,
@@ -761,7 +796,7 @@ class MiddlemanCardGenerator {
 
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       const robloxAvatarUrl = profile?.primaryIdentity?.robloxUserId
-        ? buildRobloxAvatarUrl(profile.primaryIdentity.robloxUserId)
+        ? await fetchRobloxAvatarUrl(profile.primaryIdentity.robloxUserId)
         : null;
       const robloxAvatar = robloxAvatarUrl
         ? await loadRemoteImage(robloxAvatarUrl, this.imageCache, `roblox:${robloxAvatarUrl}`)
