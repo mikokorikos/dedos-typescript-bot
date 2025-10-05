@@ -99,17 +99,36 @@ export class SubmitReviewUseCase {
     const middlemanMention = `<@${payload.middlemanId}>`;
     let middlemanDisplayName = payload.middlemanDisplayName ?? null;
 
+    let middlemanUser = null;
     if (!middlemanDisplayName) {
       const guildMember = await reviewsChannel.guild.members
         .fetch(payload.middlemanId)
         .catch(() => null);
+      middlemanUser = guildMember?.user ?? null;
       middlemanDisplayName = guildMember?.displayName ?? guildMember?.user.username ?? null;
     }
+    if (!middlemanUser) {
+      middlemanUser = await reviewsChannel.client.users.fetch(payload.middlemanId).catch(() => null);
+    }
+    if (
+      middlemanUser &&
+      typeof middlemanUser.banner === 'undefined' &&
+      typeof middlemanUser.fetch === 'function'
+    ) {
+      middlemanUser = await middlemanUser.fetch().catch(() => middlemanUser);
+    }
+    const middlemanBannerUrl =
+      middlemanUser && typeof middlemanUser.bannerURL === 'function'
+        ? middlemanUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+          middlemanUser.bannerURL({ size: 2048, forceStatic: false }) ??
+          undefined
+        : undefined;
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: payload.middlemanAvatarUrl,
+      discordBannerUrl: middlemanBannerUrl,
       profile,
       highlight: `Nueva reseña: ${ratingValue.toFixed(1)} ⭐`,
     });

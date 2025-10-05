@@ -274,9 +274,22 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
   const guildMember = interaction.guild
     ? await interaction.guild.members.fetch(target.id).catch(() => null)
     : null;
+  let resolvedUser = target;
+  if (
+    typeof resolvedUser.banner === 'undefined' &&
+    typeof resolvedUser.fetch === 'function'
+  ) {
+    resolvedUser = await resolvedUser.fetch().catch(() => resolvedUser);
+  }
   const displayName = guildMember?.displayName ?? target.globalName ?? target.username;
   const discordTag = target.tag;
   const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 256 });
+  const bannerUrl =
+    typeof resolvedUser.bannerURL === 'function'
+      ? resolvedUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+        resolvedUser.bannerURL({ size: 2048, forceStatic: false }) ??
+        undefined
+      : undefined;
 
   let embed: ReturnType<typeof embedFactory.info>;
   if (profile) {
@@ -310,6 +323,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
         discordTag,
         discordDisplayName: displayName,
         discordAvatarUrl: avatarUrl,
+        discordBannerUrl: bannerUrl,
         profile,
       })
     : memberStats
@@ -614,10 +628,22 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
     return;
   }
 
-  const user = guildMember?.user ?? (await message.client.users.fetch(targetId).catch(() => null));
+  let user = guildMember?.user ?? null;
+  if (!user) {
+    user = await message.client.users.fetch(targetId).catch(() => null);
+  }
+  if (user && typeof user.banner === 'undefined' && typeof user.fetch === 'function') {
+    user = await user.fetch().catch(() => user);
+  }
   const displayName = guildMember?.displayName ?? user?.globalName ?? user?.username ?? `<@${targetId}>`;
   const discordTag = user?.tag ?? displayName;
   const avatarUrl = user?.displayAvatarURL({ extension: 'png', size: 256 });
+  const bannerUrl =
+    user && typeof user.bannerURL === 'function'
+      ? user.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+        user.bannerURL({ size: 2048, forceStatic: false }) ??
+        undefined
+      : undefined;
 
   let embed: ReturnType<typeof embedFactory.info>;
   if (profile) {
@@ -651,6 +677,7 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
         discordTag,
         discordDisplayName: displayName,
         discordAvatarUrl: avatarUrl ?? undefined,
+        discordBannerUrl: bannerUrl,
         profile,
       })
     : memberStats

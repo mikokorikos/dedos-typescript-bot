@@ -40,6 +40,7 @@ interface ProfileCardOptions {
   readonly discordTag: string;
   readonly discordDisplayName?: string | null;
   readonly discordAvatarUrl?: string | null;
+  readonly discordBannerUrl?: string | null;
   readonly profile: MiddlemanProfile | null;
   readonly highlight?: string | null;
 }
@@ -552,6 +553,33 @@ const drawBackgroundMedia = async (
   return true;
 };
 
+const drawBannerBackground = async (
+  ctx: SKRSContext2D,
+  bannerUrl: string,
+  imageCache: Map<string, ImageCacheEntry>,
+): Promise<boolean> => {
+  const background: MiddlemanCardBackground = {
+    type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
+    url: bannerUrl,
+    fit: 'cover',
+    position: 'center',
+    opacity: 0.9,
+    blur: 0,
+    saturate: 1,
+  };
+
+  const rendered = await drawBackgroundMedia(ctx, background, imageCache);
+  if (!rendered) {
+    return false;
+  }
+
+  ctx.save();
+  ctx.fillStyle = addAlphaToHex('#050611', 0.35);
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  ctx.restore();
+  return true;
+};
+
 const getScaledDimensions = (
   metrics: { width: number; height: number },
   background: MiddlemanCardBackground,
@@ -588,6 +616,7 @@ const drawBackgroundLayer = async (
   ctx: SKRSContext2D,
   config: MiddlemanCardConfig,
   imageCache: Map<string, ImageCacheEntry>,
+  bannerUrl?: string | null,
 ): Promise<void> => {
   const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
   gradient.addColorStop(0, config.gradientStart);
@@ -595,7 +624,11 @@ const drawBackgroundLayer = async (
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
 
-  const hasMedia = config.background ? await drawBackgroundMedia(ctx, config.background, imageCache) : false;
+  const hasBanner = bannerUrl ? await drawBannerBackground(ctx, bannerUrl, imageCache) : false;
+  const hasMedia =
+    hasBanner || !config.background
+      ? hasBanner
+      : await drawBackgroundMedia(ctx, config.background, imageCache);
   if (!hasMedia) {
     drawPattern(ctx, config.pattern, config.accent, CARD_WIDTH, CARD_HEIGHT);
   }
@@ -732,6 +765,7 @@ class MiddlemanCardGenerator {
       tag: options.discordTag,
       displayName: baseName,
       avatar: options.discordAvatarUrl ?? null,
+      banner: options.discordBannerUrl ?? null,
       profile,
       highlight: options.highlight ?? config.highlight ?? null,
       cardConfig: config,
@@ -748,7 +782,7 @@ class MiddlemanCardGenerator {
       ctx.scale(scale, scale);
       ctx.textBaseline = 'top';
 
-      await drawBackgroundLayer(ctx, config, this.imageCache);
+      await drawBackgroundLayer(ctx, config, this.imageCache, options.discordBannerUrl ?? null);
       if (config.sideMedia) {
         await drawSideMedia(ctx, config.sideMedia, this.imageCache);
       }
@@ -797,10 +831,22 @@ class MiddlemanCardGenerator {
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       const robloxAvatarUrl = profile?.primaryIdentity?.robloxUserId
         ? await fetchRobloxAvatarUrl(profile.primaryIdentity.robloxUserId)
+
         : null;
-      const robloxAvatar = robloxAvatarUrl
-        ? await loadRemoteImage(robloxAvatarUrl, this.imageCache, `roblox:${robloxAvatarUrl}`)
-        : null;
+      let robloxAvatar: CanvasImageSource | null = null;
+      if (robloxAvatarUrl) {
+        robloxAvatar = await loadRemoteImage(robloxAvatarUrl, this.imageCache, `roblox:${robloxAvatarUrl}`);
+        if (!robloxAvatar && profile?.primaryIdentity?.robloxUserId) {
+          logger.error(
+            {
+              robloxUserId: profile.primaryIdentity.robloxUserId.toString(),
+              robloxAvatarUrl,
+              username: robloxUsername,
+            },
+            'No se pudo cargar el avatar de Roblox; se usará un fallback con iniciales.',
+          );
+        }
+      }
       const robloxCircleX = infoX;
       const robloxCircleY = infoY + 100;
       drawAvatar(
