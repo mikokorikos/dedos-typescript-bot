@@ -298,7 +298,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
 
 
   const statsView = buildStatsViewModel(profile);
-
+  const { metrics, subtitleParts } = statsView;
 
   logger.info(
     {

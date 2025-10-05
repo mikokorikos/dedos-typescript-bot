@@ -101,3 +101,22 @@ vi.mock('@napi-rs/canvas', () => ({
   createCanvas: (width: number, height: number) => new MockCanvas(width, height),
   loadImage: async () => ({ width: 1, height: 1 }),
 }));
+
+vi.mock('gifencoder', () => {
+  class MockGifEncoder {
+    public readonly out = {
+      getData: () => new Uint8Array(0),
+    };
+
+    public constructor(_width: number, _height: number) {}
+
+    public start(): void {}
+    public setRepeat(_repeat: number): void {}
+    public setDelay(_ms: number): void {}
+    public setQuality(_quality: number): void {}
+    public addFrame(_frame: unknown): void {}
+    public finish(): void {}
+  }
+
+  return { default: MockGifEncoder };
+});

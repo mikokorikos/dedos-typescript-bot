@@ -59,9 +59,6 @@ const componentToHex = (value: number): string => value.toString(16).padStart(2,
 const rgbToHex = (r: number, g: number, b: number): string =>
   `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
 
-type GifEncoderInstance = InstanceType<typeof GIFEncoder>;
-type GifEncoderFrame = Parameters<GifEncoderInstance['addFrame']>[0];
-
 const encodeCanvasAsGif = (
   ctx: SKRSContext2D,
   width: number,
@@ -73,7 +70,7 @@ const encodeCanvasAsGif = (
   encoder.setRepeat(0);
   encoder.setDelay(Math.max(16, Math.round(options?.delayMs ?? 80)));
   encoder.setQuality(10);
-  encoder.addFrame(ctx as unknown as GifEncoderFrame);
+  encoder.addFrame(ctx);
   encoder.finish();
   return Buffer.from(encoder.out.getData());
 };
@@ -1084,10 +1081,10 @@ class MiddlemanCardGenerator {
         ctx.textAlign = 'left';
       }
 
-      const buffer = canvas.toBuffer('image/png');
+      const buffer = encodeCanvasAsGif(ctx, CARD_WIDTH, CARD_HEIGHT, { delayMs: 80 });
       this.storeInCache(cacheKey, buffer);
       logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas generada y almacenada en cache.');
-      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
+      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.gif' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas animada.');
       return null;
