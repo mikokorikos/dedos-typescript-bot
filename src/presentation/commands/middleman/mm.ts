@@ -7,6 +7,7 @@ import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.
 
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
+import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
@@ -20,6 +21,7 @@ import {
 } from '@/shared/utils/branding';
 
 const middlemanDirectoryRepo = new PrismaMiddlemanRepository(prisma);
+const integerFormatter = new Intl.NumberFormat('es-MX');
 
 const MENTION_PATTERN = /^(?:<@!?(\d{17,20})>|(\d{17,20}))$/u;
 
@@ -257,6 +259,84 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
 
   const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
   const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+  const metrics = [
+    {
+      label: 'Vouches',
+      value: integerFormatter.format(profile.vouches),
+      emphasis: true,
+    },
+    {
+      label: 'Valoraciones',
+      value: integerFormatter.format(profile.ratingCount),
+    },
+    {
+      label: 'Promedio',
+      value: `${average.toFixed(2)} / 5 ⭐`,
+    },
+  ];
+
+  const subtitleParts = [`Roblox: ${robloxUsername}`];
+  if (profile.cardConfig.highlight) {
+    subtitleParts.push(profile.cardConfig.highlight);
+  }
+
+  logger.info(
+    {
+      command: 'mm.stats',
+      targetId: target.id,
+      paletteAccent: profile.cardConfig.accent,
+      metrics,
+    },
+    'Generando estadisticas de middleman.',
+  );
+
+  const statsCard = await middlemanCardGenerator.renderStatsCard({
+    title: `Estadsticas de ${target.username}`,
+    subtitle: subtitleParts.join(' • '),
+    metrics,
+    paletteOverrides: {
+      backgroundStart: profile.cardConfig.gradientStart,
+      backgroundEnd: profile.cardConfig.gradientEnd,
+      accent: profile.cardConfig.accent,
+      highlight: profile.cardConfig.accent,
+      highlightSoft: profile.cardConfig.accentSoft,
+    },
+    pattern: profile.cardConfig.pattern,
+    watermark: profile.cardConfig.watermark ?? null,
+  });
+
+  if (statsCard) {
+    logger.info(
+      {
+        command: 'mm.stats',
+        targetId: target.id,
+        attachmentName: statsCard.name,
+      },
+      'Enviando tarjeta de estadisticas de middleman con decoracion personalizada.',
+    );
+
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.info({
+            title: `Estadsticas de ${target.username}`,
+            description: `Se adjunta la tarjeta de estadsticas actualizada con los colores configurados por ${target.toString()}.`,
+          }),
+        ],
+        files: [statsCard],
+      }),
+    );
+    return;
+  }
+
+  logger.warn(
+    {
+      command: 'mm.stats',
+      targetId: target.id,
+    },
+    'Fallo la generacion de la tarjeta de estadisticas, respondiendo con embed de texto.',
+  );
+
   const description = [
     ` Usuario de Roblox: **${robloxUsername}**`,
     ` Vouches registrados: **${profile.vouches}**`,
