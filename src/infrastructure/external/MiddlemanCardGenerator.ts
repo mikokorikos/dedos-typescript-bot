@@ -39,10 +39,73 @@ const palette = {
   badgeBackground: 'rgba(255, 255, 255, 0.08)',
 };
 
+const HEX_COLOR_PATTERN = /^#?[0-9A-F]{6}$/iu;
+
+const sanitizeHexColor = (input: string | null | undefined): string | null => {
+  if (!input) {
+    return null;
+  }
+
+  const normalized = input.trim().toUpperCase();
+  const prefixed = normalized.startsWith('#') ? normalized : `#${normalized}`;
+  return HEX_COLOR_PATTERN.test(prefixed) ? prefixed : null;
+};
+
+const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+
+const componentToHex = (value: number): string => value.toString(16).padStart(2, '0').toUpperCase();
+
+const rgbToHex = (r: number, g: number, b: number): string =>
+  `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+
+const adjustHexBrightness = (hex: string, factor: number): string => {
+  const sanitized = sanitizeHexColor(hex);
+  if (!sanitized) {
+    return hex;
+  }
+
+  const r = Number.parseInt(sanitized.slice(1, 3), 16);
+  const g = Number.parseInt(sanitized.slice(3, 5), 16);
+  const b = Number.parseInt(sanitized.slice(5, 7), 16);
+
+  const adjust = (channel: number): number => {
+    if (factor >= 0) {
+      return clampByte(channel + (255 - channel) * Math.min(factor, 1));
+    }
+
+    return clampByte(channel * (1 + Math.max(factor, -1)));
+  };
+
+  return rgbToHex(adjust(r), adjust(g), adjust(b));
+};
+
+const getImageDimensions = (source: CanvasImageSource): { width: number; height: number } => {
+  if (typeof source === 'object' && source !== null) {
+    const maybeWidth = (source as { width?: number }).width;
+    const maybeHeight = (source as { height?: number }).height;
+    if (typeof maybeWidth === 'number' && typeof maybeHeight === 'number') {
+      return { width: maybeWidth, height: maybeHeight };
+    }
+  }
+
+  return { width: CARD_WIDTH, height: CARD_HEIGHT };
+};
+
+const isGifUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.toLowerCase().endsWith('.gif');
+  } catch {
+    return url.toLowerCase().includes('.gif');
+  }
+};
+
 interface ProfileCardOptions {
   readonly discordTag: string;
   readonly discordDisplayName?: string | null;
   readonly discordAvatarUrl?: string | null;
+  readonly discordBannerUrl?: string | null;
+  readonly accentColor?: string | null;
   readonly profile: MiddlemanProfile | null;
   readonly highlight?: string | null;
 }
@@ -579,16 +642,40 @@ class MiddlemanCardGenerator {
     const displayLabel = mentionMatch ? "Usuario " + mentionMatch[1] : baseName;
     const displayName = displayLabel.slice(0, 32);
 
+    const accentOverride = sanitizeHexColor(options.accentColor);
+    const bannerUrl = options.discordBannerUrl ?? null;
+
+    if (bannerUrl && isGifUrl(bannerUrl)) {
+      const gifCacheKey = createCacheKey('profile-banner-gif', {
+        tag: options.discordTag,
+        banner: bannerUrl,
+      });
+      const cachedGif = this.getFromCache(gifCacheKey, 'middleman-profile-banner.gif');
+      if (cachedGif) {
+        return cachedGif;
+      }
+
+      try {
+        const buffer = await fetchAvatarBuffer(bannerUrl);
+        this.storeInCache(gifCacheKey, buffer);
+        return new AttachmentBuilder(buffer, { name: 'middleman-profile-banner.gif' });
+      } catch (error) {
+        logger.warn({ err: error, bannerUrl }, 'No se pudo descargar banner animado de Discord.');
+      }
+    }
+
     const cacheKey = createCacheKey('profile', {
       tag: options.discordTag,
       displayName,
       avatar: options.discordAvatarUrl ?? null,
+      banner: bannerUrl ?? null,
       username: profile?.primaryIdentity?.username ?? null,
       robloxId: profile?.primaryIdentity?.robloxUserId?.toString() ?? null,
       vouches: profile?.vouches ?? 0,
       ratingSum: profile?.ratingSum ?? 0,
       ratingCount: profile?.ratingCount ?? 0,
       highlight: options.highlight ?? config.highlight ?? null,
+      accentColor: accentOverride,
       cardConfig: config,
     });
 
@@ -612,8 +699,57 @@ class MiddlemanCardGenerator {
         highlightSoft: config.accentSoft,
         accent: config.accent,
       };
+      const shouldOverrideAccent = Boolean(
+        accentOverride && config.accent === DEFAULT_MIDDLEMAN_CARD_CONFIG.accent,
+      );
+      const shouldOverrideGradient = Boolean(
+        accentOverride &&
+          config.gradientStart === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientStart &&
+          config.gradientEnd === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientEnd,
+      );
+      if (shouldOverrideAccent && accentOverride) {
+        paletteOverrides.highlight = accentOverride;
+        paletteOverrides.accent = accentOverride;
+        paletteOverrides.highlightSoft = withAlpha(accentOverride, 0.28);
+      }
+      if (shouldOverrideGradient && accentOverride) {
+        paletteOverrides.backgroundStart = adjustHexBrightness(accentOverride, -0.55);
+        paletteOverrides.backgroundEnd = adjustHexBrightness(accentOverride, -0.75);
+      }
 
-      drawBackground(ctx, paletteOverrides, config.pattern);
+      let bannerImage: CanvasImageSource | null = null;
+      if (bannerUrl) {
+        try {
+          const buffer = await fetchAvatarBuffer(bannerUrl);
+          bannerImage = await loadImage(buffer);
+        } catch (error) {
+          logger.warn({ err: error, bannerUrl }, 'No se pudo cargar banner estatico de Discord.');
+        }
+      }
+
+
+      drawBackground(ctx, paletteOverrides, bannerImage ? 'none' : config.pattern);
+
+      if (bannerImage) {
+        const { width: bannerWidth, height: bannerHeight } = getImageDimensions(bannerImage);
+        if (bannerWidth > 0 && bannerHeight > 0) {
+          const targetHeight = CARD_HEIGHT * 0.72;
+          const scale = Math.max(CARD_WIDTH / bannerWidth, targetHeight / bannerHeight);
+          const drawWidth = bannerWidth * scale;
+          const drawHeight = bannerHeight * scale;
+          const offsetX = (CARD_WIDTH - drawWidth) / 2;
+          ctx.save();
+          ctx.drawImage(bannerImage, offsetX, 0, drawWidth, drawHeight);
+          ctx.restore();
+
+          const fade = ctx.createLinearGradient(0, targetHeight * 0.45, 0, CARD_HEIGHT);
+          fade.addColorStop(0, 'rgba(17, 17, 32, 0)');
+          fade.addColorStop(1, 'rgba(17, 17, 32, 0.92)');
+          ctx.fillStyle = fade;
+          ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+        }
+      }
+
       const panelRect = { x: 48, y: 88, width: CARD_WIDTH - 96, height: CARD_HEIGHT - 136 };
       const accentStroke = withAlpha(paletteOverrides.accent, 0.32);
 
@@ -679,6 +815,17 @@ class MiddlemanCardGenerator {
         avatarSource = createAvatarFallback(resolveInitials(initialsSource));
       }
 
+
+      const shouldOverrideBorder = Boolean(
+        accentOverride && config.avatarBorderColor === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarBorderColor,
+      );
+      const shouldOverrideGlow = Boolean(
+        accentOverride && config.avatarGlow === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarGlow,
+      );
+      const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
+      const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
+
+
       drawAvatar(
         ctx,
         avatarSource,
@@ -686,8 +833,10 @@ class MiddlemanCardGenerator {
         132,
         AVATAR_SIZE,
         config.avatarStyle,
-        config.avatarBorderColor,
-        config.avatarGlow,
+<
+        avatarBorderColor,
+        avatarGlow,
+
       );
 
       const infoX = 82 + AVATAR_SIZE + 48;
@@ -863,12 +1012,16 @@ class MiddlemanCardGenerator {
     profile: MiddlemanProfile | null;
     discordDisplayName?: string;
     discordAvatarUrl?: string | null;
+    discordBannerUrl?: string | null;
+    accentColor?: string | null;
     highlight?: string | null;
   }): Promise<AttachmentBuilder | null> {
     return this.renderProfileCard({
       discordTag: options.discordTag,
       discordDisplayName: options.discordDisplayName,
       discordAvatarUrl: options.discordAvatarUrl,
+      discordBannerUrl: options.discordBannerUrl,
+      accentColor: options.accentColor,
       profile: options.profile,
       highlight: options.highlight ?? null,
     });

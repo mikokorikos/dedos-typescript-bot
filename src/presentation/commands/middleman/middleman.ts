@@ -471,12 +471,33 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
         return;
       }
 
-      const middlemanUser = await modalInteraction.client.users
-        .fetch(middlemanId)
-        .catch(() => null);
+      let middlemanUser = await modalInteraction.client.users.fetch(middlemanId).catch(() => null);
+      if (
+        middlemanUser &&
+        typeof middlemanUser.fetch === 'function' &&
+        (middlemanUser.banner === undefined || middlemanUser.accentColor === undefined)
+      ) {
+        middlemanUser = await middlemanUser
+          .fetch(true)
+          .then((user) => user)
+          .catch(() => middlemanUser);
+      }
+
       const middlemanDisplayName =
         middlemanUser?.globalName ?? middlemanUser?.username ?? `Middleman #${middlemanId}`;
-      const middlemanAvatarUrl = middlemanUser?.displayAvatarURL({ extension: 'png', size: 256 }) ?? undefined;
+      const middlemanAvatarUrl =
+        middlemanUser && typeof middlemanUser.displayAvatarURL === 'function'
+          ? middlemanUser.displayAvatarURL({ size: 256 }) ?? undefined
+          : undefined;
+      const middlemanBannerUrl =
+        middlemanUser && typeof middlemanUser.bannerURL === 'function'
+          ? middlemanUser.bannerURL({ size: 2048 }) ?? undefined
+          : undefined;
+      const middlemanAccentColor =
+        middlemanUser && 'hexAccentColor' in middlemanUser
+          ? (middlemanUser.hexAccentColor as string | null) ?? undefined
+          : undefined;
+
 
       await submitReviewUseCase.execute(
         {
@@ -491,6 +512,8 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           comment: comment ?? undefined,
           middlemanDisplayName,
           middlemanAvatarUrl,
+          middlemanBannerUrl,
+          middlemanAccentColor,
         },
 
         channel,

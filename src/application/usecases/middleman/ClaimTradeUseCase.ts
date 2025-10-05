@@ -66,24 +66,46 @@ export class ClaimTradeUseCase {
 
     const middlemanMention = `<@${payload.middlemanId}>`;
     const middlemanMember = await channel.guild.members.fetch(payload.middlemanId).catch(() => null);
-    const middlemanUser = middlemanMember?.user ?? null;
-    const middlemanDisplayName = middlemanMember?.displayName ?? middlemanUser?.username ?? null;
-    const middlemanAvatarUrl = (() => {
-      if (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function') {
-        return middlemanMember.displayAvatarURL({ extension: 'png', size: 256 });
-      }
 
-      if (middlemanUser && typeof middlemanUser.displayAvatarURL === 'function') {
-        return middlemanUser.displayAvatarURL({ extension: 'png', size: 256 });
-      }
+    const baseUser = middlemanMember?.user ?? (await channel.client.users.fetch(payload.middlemanId).catch(() => null));
+    const needsProfileRefresh =
+      baseUser !== null && (baseUser.banner === undefined || baseUser.accentColor === undefined);
+    const canFetchProfile = Boolean(baseUser && typeof baseUser.fetch === 'function');
+    const enrichedUser =
+      baseUser && needsProfileRefresh && canFetchProfile
+        ? await baseUser
+            .fetch(true)
+            .then((user) => user)
+            .catch(() => baseUser)
+        : baseUser;
 
-      return undefined;
-    })();
+    const middlemanDisplayName =
+      middlemanMember?.displayName ?? enrichedUser?.globalName ?? enrichedUser?.username ?? null;
+    const middlemanAvatarUrl =
+      (enrichedUser && typeof enrichedUser.displayAvatarURL === 'function'
+        ? enrichedUser.displayAvatarURL({ size: 256 })
+        : undefined) ??
+      (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function'
+        ? middlemanMember.displayAvatarURL({ size: 256 })
+        : undefined);
+    const middlemanBannerUrl =
+      enrichedUser && typeof enrichedUser.bannerURL === 'function'
+        ? enrichedUser.bannerURL({ size: 2048 }) ?? undefined
+        : undefined;
+    const accentHex =
+      enrichedUser && 'hexAccentColor' in enrichedUser
+        ? (enrichedUser.hexAccentColor as string | null)
+        : null;
+
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: middlemanAvatarUrl,
+
+      discordBannerUrl: middlemanBannerUrl,
+      accentColor: accentHex,
+
       profile,
       highlight: 'Disponible para asistencia',
     });
@@ -108,6 +130,12 @@ export class ClaimTradeUseCase {
       ].join('\n'),
     });
 
+    const accentColorNumber = accentHex ? Number.parseInt(accentHex.replace('#', ''), 16) : undefined;
+    const decorations = {
+      ...(cardAttachment ? { useHeroImage: true } : {}),
+      ...(accentColorNumber !== undefined ? { color: accentColorNumber } : {}),
+    };
+
     await channel.send(
       brandMessageOptions(
         {
@@ -115,7 +143,7 @@ export class ClaimTradeUseCase {
           files: cardAttachment ? [cardAttachment] : [],
           allowedMentions: { users: [payload.middlemanId] },
         },
-        cardAttachment ? { useHeroImage: true } : undefined,
+        decorations,
       ),
     );
 

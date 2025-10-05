@@ -106,10 +106,19 @@ export class SubmitReviewUseCase {
       middlemanDisplayName = guildMember?.displayName ?? guildMember?.user.username ?? null;
     }
 
+    const accentHex = payload.middlemanAccentColor
+      ? payload.middlemanAccentColor.startsWith('#')
+        ? payload.middlemanAccentColor.toUpperCase()
+        : `#${payload.middlemanAccentColor.toUpperCase()}`
+      : null;
+
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: payload.middlemanAvatarUrl,
+      discordBannerUrl: payload.middlemanBannerUrl,
+      accentColor: accentHex,
       profile,
       highlight: `Nueva reseña: ${ratingValue.toFixed(1)} ⭐`,
     });
@@ -119,6 +128,8 @@ export class SubmitReviewUseCase {
     if (partnerId) {
       mentionTargets.add(partnerId.toString());
     }
+
+    const accentColorNumber = accentHex ? Number.parseInt(accentHex.replace('#', ''), 16) : undefined;
 
     await reviewsChannel.send(
       brandMessageOptions({
@@ -139,7 +150,8 @@ export class SubmitReviewUseCase {
         ],
         files: cardAttachment ? [cardAttachment] : [],
         allowedMentions: { users: Array.from(mentionTargets) },
-      }),
+      },
+      accentColorNumber !== undefined ? { color: accentColorNumber } : undefined),
     );
     this.logger.info(
       {
