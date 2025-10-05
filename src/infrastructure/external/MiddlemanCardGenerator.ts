@@ -825,7 +825,6 @@ class MiddlemanCardGenerator {
       const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
       const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
 
-
       drawAvatar(
         ctx,
         avatarSource,
@@ -833,10 +832,8 @@ class MiddlemanCardGenerator {
         132,
         AVATAR_SIZE,
         config.avatarStyle,
-<
         avatarBorderColor,
         avatarGlow,
-
       );
 
       const infoX = 82 + AVATAR_SIZE + 48;
