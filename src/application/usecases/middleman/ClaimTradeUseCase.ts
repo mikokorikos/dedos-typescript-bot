@@ -66,42 +66,41 @@ export class ClaimTradeUseCase {
 
     const middlemanMention = `<@${payload.middlemanId}>`;
     const middlemanMember = await channel.guild.members.fetch(payload.middlemanId).catch(() => null);
-    const baseUser = middlemanMember?.user ?? (await channel.client.users.fetch(payload.middlemanId).catch(() => null));
-    const needsProfileRefresh =
-      baseUser !== null && (baseUser.banner === undefined || baseUser.accentColor === undefined);
-    const canFetchProfile = Boolean(baseUser && typeof baseUser.fetch === 'function');
-    const enrichedUser =
-      baseUser && needsProfileRefresh && canFetchProfile
-        ? await baseUser
-            .fetch(true)
-            .then((user) => user)
-            .catch(() => baseUser)
-        : baseUser;
+    let middlemanUser = middlemanMember?.user ?? null;
+    if (!middlemanUser) {
+      middlemanUser = await channel.client.users.fetch(payload.middlemanId).catch(() => null);
+    }
+    if (
+      middlemanUser &&
+      typeof middlemanUser.banner === 'undefined' &&
+      typeof middlemanUser.fetch === 'function'
+    ) {
+      middlemanUser = await middlemanUser.fetch().catch(() => middlemanUser);
+    }
+    const middlemanDisplayName = middlemanMember?.displayName ?? middlemanUser?.username ?? null;
+    const middlemanAvatarUrl = (() => {
+      if (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function') {
+        return middlemanMember.displayAvatarURL({ extension: 'png', size: 256 });
+      }
 
-    const middlemanDisplayName =
-      middlemanMember?.displayName ?? enrichedUser?.globalName ?? enrichedUser?.username ?? null;
-    const middlemanAvatarUrl =
-      (enrichedUser && typeof enrichedUser.displayAvatarURL === 'function'
-        ? enrichedUser.displayAvatarURL({ size: 256 })
-        : undefined) ??
-      (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function'
-        ? middlemanMember.displayAvatarURL({ size: 256 })
-        : undefined);
+      if (middlemanUser && typeof middlemanUser.displayAvatarURL === 'function') {
+        return middlemanUser.displayAvatarURL({ extension: 'png', size: 256 });
+      }
+
+      return undefined;
+    })();
     const middlemanBannerUrl =
-      enrichedUser && typeof enrichedUser.bannerURL === 'function'
-        ? enrichedUser.bannerURL({ size: 2048 }) ?? undefined
+      middlemanUser && typeof middlemanUser.bannerURL === 'function'
+        ? middlemanUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+          middlemanUser.bannerURL({ size: 2048, forceStatic: false }) ??
+          undefined
         : undefined;
-    const accentHex =
-      enrichedUser && 'hexAccentColor' in enrichedUser
-        ? (enrichedUser.hexAccentColor as string | null)
-        : null;
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: middlemanAvatarUrl,
       discordBannerUrl: middlemanBannerUrl,
-      accentColor: accentHex,
       profile,
       highlight: 'Disponible para asistencia',
     });
@@ -114,23 +113,17 @@ export class ClaimTradeUseCase {
       ManageChannels: false,
     });
 
-    const infoEmbed = this.embeds.info({
-      title: '🛡️ Middleman asignado',
-      description: [
-        `**Aviso:** ${middlemanMention} ha reclamado este ticket.`,
-        '',
-        `**Middleman:** ${middlemanMention}`,
-        `**Roblox:** ${robloxUsername}`,
-        `**Vouches acumulados:** ${vouches}`,
-        `**Calificacion:** ${ratingLabel}`,
-      ].join('\n'),
-    });
-
-    const accentColorNumber = accentHex ? Number.parseInt(accentHex.replace('#', ''), 16) : undefined;
-    const decorations = {
-      ...(cardAttachment ? { useHeroImage: true } : {}),
-      ...(accentColorNumber !== undefined ? { color: accentColorNumber } : {}),
-    };
+      const infoEmbed = this.embeds.info({
+        title: '🛡️ Middleman asignado',
+        description: [
+          `**Aviso:** ${middlemanMention} ha reclamado este ticket.`,
+          '',
+          `**Middleman:** ${middlemanMention}`,
+          `**Roblox:** ${robloxUsername}`,
+          `**Vouches acumulados:** ${vouches}`,
+          `**Calificación:** ${ratingLabel}`,
+        ].join('\n'),
+      });
 
     await channel.send(
       brandMessageOptions(
@@ -139,7 +132,7 @@ export class ClaimTradeUseCase {
           files: cardAttachment ? [cardAttachment] : [],
           allowedMentions: { users: [payload.middlemanId] },
         },
-        decorations,
+        cardAttachment ? { useHeroImage: true } : undefined,
       ),
     );
 

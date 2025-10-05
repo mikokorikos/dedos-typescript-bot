@@ -264,7 +264,8 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
         pri.last_used_at AS identity_last_used_at,
         COALESCE(vc.vouches_count, 0) AS vouches_count,
         COALESCE(rr.rating_sum, 0) AS rating_sum,
-        COALESCE(rr.rating_count, 0) AS rating_count
+        COALESCE(rr.rating_count, 0) AS rating_count,
+        m.card_config AS card_config
       FROM middlemen m
       LEFT JOIN user_roblox_identities pri ON pri.id = m.primary_roblox_identity_id
       LEFT JOIN (
@@ -313,6 +314,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
         stats.vouches_count,
         stats.rating_sum,
         stats.rating_count,
+        stats.card_config,
         stats.updated_at
       FROM (
         SELECT m.user_id,
@@ -324,6 +326,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
           COALESCE(vc.vouches_count, 0) AS vouches_count,
           COALESCE(rr.rating_sum, 0) AS rating_sum,
           COALESCE(rr.rating_count, 0) AS rating_count,
+          m.card_config AS card_config,
           m.updated_at
         FROM middlemen m
         LEFT JOIN user_roblox_identities pri ON pri.id = m.primary_roblox_identity_id
@@ -385,6 +388,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     vouches_count: bigint | number | null;
     rating_sum: bigint | number | null;
     rating_count: bigint | number | null;
+    card_config: unknown;
   }): MiddlemanProfile {
     const primaryIdentity =
       row.identity_id === null || row.identity_username === null
@@ -403,7 +407,10 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       vouches: Number(row.vouches_count ?? 0),
       ratingSum: Number(row.rating_sum ?? 0),
       ratingCount: Number(row.rating_count ?? 0),
-      cardConfig: DEFAULT_MIDDLEMAN_CARD_CONFIG,
+      cardConfig: PrismaMiddlemanRepository.parseCardConfig(row.card_config),
     };
   }
 }
+
+
+

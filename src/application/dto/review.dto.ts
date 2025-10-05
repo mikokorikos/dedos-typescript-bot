@@ -17,11 +17,6 @@ export const SubmitReviewSchema = z.object({
     .max(64)
     .optional(),
   middlemanAvatarUrl: z.string().url().optional(),
-  middlemanBannerUrl: z.string().url().optional(),
-  middlemanAccentColor: z
-    .string()
-    .regex(/^#?[0-9a-fA-F]{6}$/u, 'Invalid accent color')
-    .optional(),
 });
 
 export type SubmitReviewDTO = z.infer<typeof SubmitReviewSchema>;

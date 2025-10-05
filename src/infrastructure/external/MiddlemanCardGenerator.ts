@@ -4,18 +4,23 @@
 
 import { createHash } from 'node:crypto';
 
-import type { SKRSContext2D } from '@napi-rs/canvas';
-import { createCanvas, loadImage } from '@napi-rs/canvas';
+import { createCanvas, loadImage, type SKRSContext2D } from '@napi-rs/canvas';
 import { AttachmentBuilder } from 'discord.js';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
-import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
-import { DEFAULT_MIDDLEMAN_CARD_CONFIG } from '@/domain/value-objects/MiddlemanCardConfig';
+import type {
+  MiddlemanCardBackground,
+  MiddlemanCardConfig,
+  MiddlemanCardSideMedia,
+  MiddlemanCardVouchPanel,
+} from '@/domain/value-objects/MiddlemanCardConfig';
+import { addAlphaToHex, DEFAULT_MIDDLEMAN_CARD_CONFIG } from '@/domain/value-objects/MiddlemanCardConfig';
 import { logger } from '@/shared/logger/pino';
 
 const CARD_WIDTH = 1280;
 const CARD_HEIGHT = 460;
-const AVATAR_SIZE = 180;
+const AVATAR_SIZE = 182;
+const ROBLOX_AVATAR_SIZE = 78;
 const CACHE_TTL_MS = 5 * 60_000;
 
 const LAYOUT_SCALE: Record<MiddlemanCardConfig['layout'], number> = {
@@ -24,80 +29,11 @@ const LAYOUT_SCALE: Record<MiddlemanCardConfig['layout'], number> = {
   expanded: 1.15,
 };
 
-const palette = {
-  backgroundStart: '#161129',
-  backgroundEnd: '#221b41',
-  highlight: '#7c5cff',
-  highlightSoft: 'rgba(124, 92, 255, 0.28)',
-  accent: '#11c8b3',
-  accentMuted: '#0c9c8e',
-  textPrimary: '#f5f7ff',
-  textSecondary: '#aeb3c7',
-  textMuted: '#7c8094',
-  panel: 'rgba(17, 17, 32, 0.72)',
-  border: 'rgba(255, 255, 255, 0.08)',
-  badgeBackground: 'rgba(255, 255, 255, 0.08)',
-};
+type CanvasImageSource = Parameters<SKRSContext2D['drawImage']>[0];
 
-const HEX_COLOR_PATTERN = /^#?[0-9A-F]{6}$/iu;
-
-const sanitizeHexColor = (input: string | null | undefined): string | null => {
-  if (!input) {
-    return null;
-  }
-
-  const normalized = input.trim().toUpperCase();
-  const prefixed = normalized.startsWith('#') ? normalized : `#${normalized}`;
-  return HEX_COLOR_PATTERN.test(prefixed) ? prefixed : null;
-};
-
-const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
-
-const componentToHex = (value: number): string => value.toString(16).padStart(2, '0').toUpperCase();
-
-const rgbToHex = (r: number, g: number, b: number): string =>
-  `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
-
-const adjustHexBrightness = (hex: string, factor: number): string => {
-  const sanitized = sanitizeHexColor(hex);
-  if (!sanitized) {
-    return hex;
-  }
-
-  const r = Number.parseInt(sanitized.slice(1, 3), 16);
-  const g = Number.parseInt(sanitized.slice(3, 5), 16);
-  const b = Number.parseInt(sanitized.slice(5, 7), 16);
-
-  const adjust = (channel: number): number => {
-    if (factor >= 0) {
-      return clampByte(channel + (255 - channel) * Math.min(factor, 1));
-    }
-
-    return clampByte(channel * (1 + Math.max(factor, -1)));
-  };
-
-  return rgbToHex(adjust(r), adjust(g), adjust(b));
-};
-
-const getImageDimensions = (source: CanvasImageSource): { width: number; height: number } => {
-  if (typeof source === 'object' && source !== null) {
-    const maybeWidth = (source as { width?: number }).width;
-    const maybeHeight = (source as { height?: number }).height;
-    if (typeof maybeWidth === 'number' && typeof maybeHeight === 'number') {
-      return { width: maybeWidth, height: maybeHeight };
-    }
-  }
-
-  return { width: CARD_WIDTH, height: CARD_HEIGHT };
-};
-
-const isGifUrl = (url: string): boolean => {
-  try {
-    const parsed = new URL(url);
-    return parsed.pathname.toLowerCase().endsWith('.gif');
-  } catch {
-    return url.toLowerCase().includes('.gif');
-  }
+type ExtendedContext = SKRSContext2D & {
+  filter?: string;
+  globalAlpha?: number;
 };
 
 interface ProfileCardOptions {
@@ -105,7 +41,6 @@ interface ProfileCardOptions {
   readonly discordDisplayName?: string | null;
   readonly discordAvatarUrl?: string | null;
   readonly discordBannerUrl?: string | null;
-  readonly accentColor?: string | null;
   readonly profile: MiddlemanProfile | null;
   readonly highlight?: string | null;
 }
@@ -137,44 +72,37 @@ interface StatsCardOptions {
   readonly metrics: readonly StatsCardMetric[];
 }
 
-type CanvasImageSource = Parameters<SKRSContext2D['drawImage']>[0];
-
 interface CacheEntry {
   readonly buffer: Buffer;
   readonly expiresAt: number;
 }
 
+interface ImageCacheEntry {
+  readonly image: CanvasImageSource;
+  readonly expiresAt: number;
+}
+
+const formatNumber = (value: number): string => {
+  if (value >= 1_000_000) {
+    return `${Math.round((value / 1_000_000) * 10) / 10}M`;
+  }
+
+  if (value >= 1000) {
+    return `${Math.round((value / 1000) * 10) / 10}k`;
+  }
+
+  return `${value}`;
+};
+
+const clamp = (value: number, min: number, max: number): number =>
+  Math.min(Math.max(value, min), max);
+
 const createCacheKey = (type: string, payload: unknown): string => {
   const serialized = JSON.stringify(payload, (_key, value) =>
     typeof value === 'bigint' ? value.toString() : value,
   );
+
   return createHash('sha1').update(`${type}:${serialized}`).digest('hex');
-};
-
-const drawBackground = (
-  ctx: SKRSContext2D,
-  paletteOverrides: typeof palette = palette,
-  pattern: MiddlemanCardConfig['pattern'] = 'grid',
-): void => {
-  const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
-  gradient.addColorStop(0, paletteOverrides.backgroundStart);
-  gradient.addColorStop(1, paletteOverrides.backgroundEnd);
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
-
-  const accentGradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, 160);
-  accentGradient.addColorStop(0, withAlpha(paletteOverrides.accent, 0.55));
-  accentGradient.addColorStop(1, withAlpha(paletteOverrides.accent, 0));
-  ctx.fillStyle = accentGradient;
-  ctx.fillRect(0, 0, CARD_WIDTH, 180);
-
-  const radial = ctx.createRadialGradient(CARD_WIDTH - 260, 160, 32, CARD_WIDTH - 200, 180, 420);
-  radial.addColorStop(0, paletteOverrides.highlightSoft);
-  radial.addColorStop(1, withAlpha(paletteOverrides.highlightSoft, 0));
-  ctx.fillStyle = radial;
-  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
-
-  drawPattern(ctx, pattern, paletteOverrides.accent, CARD_WIDTH, CARD_HEIGHT);
 };
 
 const traceRoundedRectPath = (
@@ -185,16 +113,17 @@ const traceRoundedRectPath = (
   height: number,
   radius: number,
 ): void => {
-  const clampedRadius = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
-  ctx.moveTo(x + clampedRadius, y);
-  ctx.lineTo(x + width - clampedRadius, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + clampedRadius);
-  ctx.lineTo(x + width, y + height - clampedRadius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - clampedRadius, y + height);
-  ctx.lineTo(x + clampedRadius, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - clampedRadius);
-  ctx.lineTo(x, y + clampedRadius);
-  ctx.quadraticCurveTo(x, y, x + clampedRadius, y);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
 };
 
 const drawRoundedRect = (
@@ -206,152 +135,50 @@ const drawRoundedRect = (
   radius: number,
   fillStyle: string,
   strokeStyle?: string,
-): void => {
-  ctx.beginPath();
-  traceRoundedRectPath(ctx, x, y, width, height, radius);
-  ctx.closePath();
-
-  ctx.fillStyle = fillStyle;
-  ctx.fill();
-
-  if (strokeStyle) {
-    ctx.strokeStyle = strokeStyle;
-    ctx.stroke();
-  }
-};
-
-const traceCutRectPath = (
-  ctx: SKRSContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  cut: number,
-): void => {
-  const cutSize = Math.max(0, Math.min(cut, Math.min(width, height) / 2));
-  ctx.moveTo(x + cutSize, y);
-  ctx.lineTo(x + width - cutSize, y);
-  ctx.lineTo(x + width, y + cutSize);
-  ctx.lineTo(x + width, y + height - cutSize);
-  ctx.lineTo(x + width - cutSize, y + height);
-  ctx.lineTo(x + cutSize, y + height);
-  ctx.lineTo(x, y + height - cutSize);
-  ctx.lineTo(x, y + cutSize);
-};
-
-const drawCutRect = (
-  ctx: SKRSContext2D,
-  x: number,
-  y: number,
-  width: number,
-  height: number,
-  cut: number,
-  fillStyle: string,
-  strokeStyle?: string,
-): void => {
-  ctx.beginPath();
-  traceCutRectPath(ctx, x, y, width, height, cut);
-  ctx.closePath();
-
-  ctx.fillStyle = fillStyle;
-  ctx.fill();
-
-  if (strokeStyle) {
-    ctx.strokeStyle = strokeStyle;
-    ctx.stroke();
-  }
-};
-
-type AvatarShape = MiddlemanCardConfig['avatarStyle'];
-
-const traceAvatarPath = (
-  ctx: SKRSContext2D,
-  x: number,
-  y: number,
-  size: number,
-  shape: AvatarShape,
-): void => {
-  const centerX = x + size / 2;
-  const centerY = y + size / 2;
-
-  switch (shape) {
-    case 'hexagon': {
-      const radius = size / 2;
-      const step = Math.PI / 3;
-      ctx.moveTo(centerX + radius, centerY);
-      for (let i = 1; i < 6; i += 1) {
-        const angle = step * i;
-        ctx.lineTo(centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle));
-      }
-      break;
-    }
-    case 'rounded': {
-      traceRoundedRectPath(ctx, x, y, size, size, size * 0.28);
-      break;
-    }
-    case 'circle':
-    default: {
-      ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
-      break;
-    }
-  }
-};
-
-const drawAvatar = (
-  ctx: SKRSContext2D,
-  source: CanvasImageSource,
-  x: number,
-  y: number,
-  size: number,
-  shape: AvatarShape,
-  borderColor: string,
-  glowColor: string,
+  strokeWidth = 2,
+  shadow?: { color: string; blur: number },
 ): void => {
   ctx.save();
-  ctx.beginPath();
-  traceAvatarPath(ctx, x, y, size, shape);
-  ctx.closePath();
-
-  if (glowColor) {
-    ctx.shadowColor = glowColor;
-    ctx.shadowBlur = 28;
-    ctx.fillStyle = glowColor;
-    ctx.fill();
+  if (shadow) {
+    ctx.shadowColor = shadow.color;
+    ctx.shadowBlur = shadow.blur;
   }
 
-  ctx.shadowBlur = 0;
-  ctx.beginPath();
-  traceAvatarPath(ctx, x, y, size, shape);
-  ctx.closePath();
-  ctx.clip();
-  ctx.drawImage(source, x, y, size, size);
-  ctx.restore();
+  traceRoundedRectPath(ctx, x, y, width, height, radius);
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
 
-  if (borderColor) {
-    ctx.save();
-    ctx.beginPath();
-    traceAvatarPath(ctx, x, y, size, shape);
-    ctx.closePath();
-    ctx.lineWidth = 6;
-    ctx.strokeStyle = withAlpha(borderColor, 0.75);
+  if (strokeStyle && strokeWidth > 0) {
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = strokeStyle;
+    ctx.lineWidth = strokeWidth;
     ctx.stroke();
-    ctx.restore();
   }
+
+  ctx.restore();
 };
 
-const withAlpha = (color: string, alpha: number): string => {
-  if (color.startsWith('rgba')) {
-    return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/u, (_, r, g, b) => `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${alpha.toFixed(2)})`);
+const traceStarPath = (
+  ctx: SKRSContext2D,
+  centerX: number,
+  centerY: number,
+  innerRadius: number,
+  outerRadius: number,
+  arms: number,
+): void => {
+  ctx.beginPath();
+  for (let step = 0; step < arms * 2; step += 1) {
+    const radius = step % 2 === 0 ? outerRadius : innerRadius;
+    const angle = (Math.PI * step) / arms - Math.PI / 2;
+    const pointX = centerX + radius * Math.cos(angle);
+    const pointY = centerY + radius * Math.sin(angle);
+    if (step === 0) {
+      ctx.moveTo(pointX, pointY);
+    } else {
+      ctx.lineTo(pointX, pointY);
+    }
   }
-
-  if (color.startsWith('#') && color.length === 7) {
-    const r = parseInt(color.slice(1, 3), 16);
-    const g = parseInt(color.slice(3, 5), 16);
-    const b = parseInt(color.slice(5, 7), 16);
-    return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
-  }
-
-  return color;
+  ctx.closePath();
 };
 
 const drawPattern = (
@@ -365,9 +192,8 @@ const drawPattern = (
     return;
   }
 
-  const stroke = withAlpha(accentColor, 0.08);
   ctx.save();
-  ctx.strokeStyle = stroke;
+  ctx.strokeStyle = addAlphaToHex(accentColor, 0.08);
   ctx.lineWidth = 1.2;
   ctx.globalCompositeOperation = 'lighter';
 
@@ -389,45 +215,47 @@ const drawPattern = (
       break;
     }
     case 'waves': {
-      const amplitude = 12;
-      const wavelength = 140;
-      ctx.beginPath();
-      for (let x = -wavelength; x <= width + wavelength; x += 6) {
-        const y = height * 0.2 + Math.sin(x / wavelength * Math.PI * 2) * amplitude;
-        ctx.lineTo(x, y);
+      const amplitude = 28;
+      const wavelength = 160;
+      for (let offset = -wavelength; offset < height + wavelength; offset += 72) {
+        ctx.beginPath();
+        for (let x = -wavelength; x <= width + wavelength; x += 4) {
+          const y = offset + Math.sin((x / wavelength) * Math.PI * 2) * amplitude;
+          if (x === -wavelength) {
+            ctx.moveTo(x, y);
+          } else {
+            ctx.lineTo(x, y);
+          }
+        }
+        ctx.stroke();
       }
-      ctx.stroke();
-      ctx.beginPath();
-      for (let x = -wavelength; x <= width + wavelength; x += 6) {
-        const y = height * 0.65 + Math.cos(x / wavelength * Math.PI * 2) * amplitude;
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
       break;
     }
     case 'circuit': {
-      const step = 110;
-      for (let x = 0; x <= width; x += step) {
-        for (let y = 0; y <= height; y += step) {
+      const step = 80;
+      for (let x = -step; x <= width + step; x += step) {
+        for (let y = -step; y <= height + step; y += step) {
           ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + step / 2, y + step / 4);
-          ctx.lineTo(x + step / 2, y + (step * 3) / 4);
+          ctx.arc(x, y, 6, 0, Math.PI * 2);
           ctx.stroke();
           ctx.beginPath();
-          ctx.arc(x + step / 2, y + step / 2, 6, 0, Math.PI * 2);
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + step / 2, y);
+          ctx.lineTo(x + step / 2, y + step / 2);
           ctx.stroke();
         }
       }
       break;
     }
     case 'mesh': {
-      const step = 80;
-      for (let x = -height; x <= width; x += step) {
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x + height, height);
-        ctx.stroke();
+      const step = 56;
+      for (let x = -step; x <= width + step; x += step) {
+        for (let y = -step; y <= height + step; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + step, y + step);
+          ctx.stroke();
+        }
       }
       break;
     }
@@ -438,55 +266,65 @@ const drawPattern = (
   ctx.restore();
 };
 
-const drawStar = (
+const createAvatarFallback = (initials: string, size: number): CanvasImageSource => {
+  const canvas = createCanvas(size, size);
+  const ctx = canvas.getContext('2d');
+  const gradient = ctx.createLinearGradient(0, 0, size, size);
+  gradient.addColorStop(0, '#2b2e57');
+  gradient.addColorStop(1, '#171a2f');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, size, size);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = `600 ${Math.round(size * 0.42)}px "Segoe UI", sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(initials.slice(0, 2).toUpperCase(), size / 2, size / 2);
+
+  return canvas as CanvasImageSource;
+};
+
+const resolveInitials = (value: string): string => {
+  const cleaned = value.replace(/[^\p{L}\p{N} ]+/gu, ' ').trim();
+  if (!cleaned) {
+    return 'MM';
+  }
+
+  const parts = cleaned
+    .split(/\s+/u)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() ?? '');
+
+  return (parts[0] ?? 'M') + (parts[1] ?? parts[0] ?? 'M');
+};
+
+const drawAvatar = (
   ctx: SKRSContext2D,
+  source: CanvasImageSource,
   x: number,
   y: number,
-  outerRadius: number,
-  color: string,
-  style: 'sharp' | 'rounded',
-  fillRatio: number,
+  size: number,
+  options?: { borderColor?: string; borderWidth?: number },
 ): void => {
-  const spikes = 5;
-  const innerRadius = style === 'rounded' ? outerRadius * 0.6 : outerRadius * 0.52;
-  const step = Math.PI / spikes;
-
   ctx.save();
-  ctx.beginPath();
-  ctx.translate(x, y);
-  ctx.rotate(-Math.PI / 2);
-  ctx.moveTo(0, -outerRadius);
-  for (let i = 0; i < spikes; i += 1) {
-    ctx.lineTo(Math.cos(i * 2 * step) * outerRadius, Math.sin(i * 2 * step) * outerRadius);
-    ctx.lineTo(Math.cos((i * 2 + 1) * step) * innerRadius, Math.sin((i * 2 + 1) * step) * innerRadius);
-  }
-  ctx.closePath();
-
-  ctx.fillStyle = withAlpha(color, 0.18);
+  traceRoundedRectPath(ctx, x, y, size, size, size / 2);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+  ctx.shadowBlur = 28;
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
   ctx.fill();
   ctx.clip();
-
-  if (fillRatio > 0) {
-    ctx.fillStyle = color;
-    ctx.fillRect(-outerRadius, -outerRadius, outerRadius * 2 * Math.min(1, fillRatio), outerRadius * 2);
-  }
-
+  ctx.shadowBlur = 0;
+  ctx.drawImage(source, x, y, size, size);
   ctx.restore();
 
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.rotate(-Math.PI / 2);
-  ctx.beginPath();
-  ctx.moveTo(0, -outerRadius);
-  for (let i = 0; i < spikes; i += 1) {
-    ctx.lineTo(Math.cos(i * 2 * step) * outerRadius, Math.sin(i * 2 * step) * outerRadius);
-    ctx.lineTo(Math.cos((i * 2 + 1) * step) * innerRadius, Math.sin((i * 2 + 1) * step) * innerRadius);
+  if (options?.borderColor && options.borderWidth && options.borderWidth > 0) {
+    ctx.save();
+    traceRoundedRectPath(ctx, x, y, size, size, size / 2);
+    ctx.strokeStyle = options.borderColor;
+    ctx.lineWidth = options.borderWidth;
+    ctx.stroke();
+    ctx.restore();
   }
-  ctx.closePath();
-  ctx.strokeStyle = withAlpha(color, 0.45);
-  ctx.lineWidth = 1.4;
-  ctx.stroke();
-  ctx.restore();
 };
 
 const drawRatingStars = (
@@ -494,118 +332,111 @@ const drawRatingStars = (
   rating: number,
   x: number,
   y: number,
-  spacing: number,
-  color: string,
-  style: 'sharp' | 'rounded',
+  size: number,
+  accent: string,
+  style: MiddlemanCardConfig['starStyle'],
 ): void => {
-  const clamped = Math.max(0, Math.min(5, rating));
-  const full = Math.floor(clamped);
-  const fraction = clamped - full;
-  const radius = 18;
+  const starCount = 5;
+  const spacing = size * 0.22;
+  const baseSize = size * 0.18;
+  const filledColor = accent;
+  const emptyColor = addAlphaToHex('#FFFFFF', 0.18);
 
-  for (let index = 0; index < 5; index += 1) {
-    const offset = x + index * spacing;
-    const fillRatio = index < full ? 1 : index === full ? fraction : 0;
-    drawStar(ctx, offset, y, radius, color, style, fillRatio);
+  for (let index = 0; index < starCount; index += 1) {
+    const centerX = x + index * (baseSize * 2 + spacing) + baseSize;
+    const centerY = y + baseSize;
+    const progress = clamp(rating - index, 0, 1);
+    const arms = style === 'rounded' ? 6 : 5;
+    const innerRadius = baseSize * (style === 'rounded' ? 0.52 : 0.5);
+    const outerRadius = baseSize * (style === 'rounded' ? 1.08 : 1.1);
+
+    ctx.save();
+    traceStarPath(ctx, centerX, centerY, innerRadius, outerRadius, arms);
+    ctx.fillStyle = emptyColor;
+    ctx.fill();
+
+    if (progress > 0) {
+      traceStarPath(ctx, centerX, centerY, innerRadius, outerRadius, arms);
+      ctx.clip();
+      const gradient = ctx.createLinearGradient(centerX - outerRadius, y, centerX + outerRadius, y + baseSize * 2);
+      gradient.addColorStop(0, filledColor);
+      gradient.addColorStop(1, addAlphaToHex(filledColor, 0.65));
+      ctx.fillStyle = gradient;
+      ctx.fillRect(centerX - outerRadius, y - baseSize, outerRadius * 2, baseSize * 3);
+    }
+
+    ctx.restore();
   }
 };
 
-const drawBadge = (
+const drawChip = (
   ctx: SKRSContext2D,
+  label: string,
+  accent: string,
   x: number,
   y: number,
-  label: string,
-  value: string,
-  accentColor: string,
-): void => {
-  const paddingX = 18;
-  ctx.font = '500 18px "Segoe UI", Arial';
-  const labelWidth = ctx.measureText(label).width;
-  ctx.font = '600 20px "Segoe UI", Arial';
-  const valueWidth = ctx.measureText(value).width;
-  const width = Math.max(140, paddingX * 2 + labelWidth + 12 + valueWidth);
-  const height = 44;
+): number => {
+  const paddingX = 16;
+  ctx.font = '600 18px "Segoe UI", sans-serif';
+  const metrics = ctx.measureText(label);
+  const width = metrics.width + paddingX * 2;
+  const height = 32;
+  drawRoundedRect(ctx, x, y, width, height, 16, addAlphaToHex(accent, 0.16), addAlphaToHex(accent, 0.55));
 
-  drawRoundedRect(ctx, x, y, width, height, 18, palette.badgeBackground, 'rgba(255,255,255,0.08)');
-
-  ctx.font = '500 18px "Segoe UI", Arial';
-  ctx.fillStyle = palette.textMuted;
-  ctx.fillText(label.toUpperCase(), x + paddingX, y + height / 2 + 6);
-
-  ctx.font = '600 20px "Segoe UI", Arial';
-  ctx.fillStyle = accentColor;
-  ctx.fillText(value, x + paddingX + labelWidth + 12, y + height / 2 + 6);
+  ctx.fillStyle = accent;
+  const previousBaseline = ctx.textBaseline;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + paddingX, y + height / 2);
+  ctx.textBaseline = previousBaseline;
+  return width + 12;
 };
 
-const drawMetricPill = (
+const drawVouchPanel = (
   ctx: SKRSContext2D,
+  panel: MiddlemanCardVouchPanel,
+  vouches: number,
+  rating: number,
+  ratingCount: number,
   x: number,
   y: number,
-  title: string,
-  value: string,
-  highlight = false,
+  width: number,
 ): void => {
-  const width = 220;
-  const height = 86;
   drawRoundedRect(
     ctx,
     x,
     y,
     width,
-    height,
-    22,
-    highlight ? 'rgba(17, 200, 179, 0.16)' : palette.panel,
-    highlight ? 'rgba(17, 200, 179, 0.45)' : palette.border,
+    198,
+    26,
+    addAlphaToHex('#101226', 0.92),
+    addAlphaToHex(panel.accent, 0.35),
+    2.4,
+    { color: addAlphaToHex(panel.accent, 0.35), blur: 18 },
   );
 
-  ctx.font = '500 18px "Segoe UI", Arial';
-  ctx.fillStyle = palette.textMuted;
-  ctx.fillText(title.toUpperCase(), x + 24, y + 32);
+  ctx.fillStyle = panel.accent;
+  ctx.font = '700 20px "Segoe UI", sans-serif';
+  ctx.fillText(panel.label.toUpperCase(), x + 24, y + 24);
 
-  ctx.font = '700 32px "Segoe UI", Arial';
-  ctx.fillStyle = palette.textPrimary;
-  ctx.fillText(value, x + 24, y + 64);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 56px "Segoe UI", sans-serif';
+  ctx.fillText(formatNumber(vouches), x + 24, y + 62);
+
+  ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+  ctx.font = '500 18px "Segoe UI", sans-serif';
+  ctx.fillText(panel.secondaryLabel, x + 24, y + 130);
+
+  const ratingLabel = ratingCount > 0 ? `${rating.toFixed(2)} · ${ratingCount} reseñas` : 'Sin reseñas registradas';
+  ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.86);
+  ctx.font = '600 18px "Segoe UI", sans-serif';
+  ctx.fillText(ratingLabel, x + 24, y + 158);
 };
 
-const createAvatarFallback = (initials: string): CanvasImageSource => {
-  const canvas = createCanvas(AVATAR_SIZE, AVATAR_SIZE);
-  const ctx = canvas.getContext('2d');
-
-  const gradient = ctx.createLinearGradient(0, 0, AVATAR_SIZE, AVATAR_SIZE);
-  gradient.addColorStop(0, '#3d2a7f');
-  gradient.addColorStop(1, '#291f55');
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, AVATAR_SIZE, AVATAR_SIZE);
-
-  ctx.font = 'bold 72px "Segoe UI", Arial';
-  ctx.fillStyle = '#f5f7ff';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(initials, AVATAR_SIZE / 2, AVATAR_SIZE / 2);
-
-  return canvas;
-};
-
-const resolveInitials = (tag: string | null | undefined): string => {
-  if (!tag) {
-    return 'MM';
-  }
-
-  const parts = tag
-    .replace(/[#@<>]/gu, ' ')
-    .split(/\s+/u)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((segment) => segment[0]?.toUpperCase() ?? '');
-
-  return parts.join('') || 'MM';
-};
-
-const fetchAvatarBuffer = async (url: string): Promise<Buffer> => {
+const fetchImageBuffer = async (url: string): Promise<Buffer> => {
   const response = await fetch(url, {
     headers: {
-      'User-Agent': 'Mozilla/5.0 (compatible; DedosShopBot/1.0; +https://discord.gg/dedos)',
-      Accept: 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
+      'User-Agent': 'Mozilla/5.0 (compatible; DedosShopBot/1.0; +https://dedos.xyz)',
+      Accept: 'image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5',
     },
   });
 
@@ -616,66 +447,327 @@ const fetchAvatarBuffer = async (url: string): Promise<Buffer> => {
   return Buffer.from(await response.arrayBuffer());
 };
 
-const loadRobloxAvatar = async (robloxUserId: bigint): Promise<CanvasImageSource | null> => {
-  const url = `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxUserId.toString()}&width=352&height=352&format=png`;
+const loadRemoteImage = async (
+  url: string,
+  cache: Map<string, ImageCacheEntry>,
+  cacheKey: string,
+): Promise<CanvasImageSource | null> => {
+  const now = Date.now();
+  const cached = cache.get(cacheKey);
+  if (cached && cached.expiresAt > now) {
+    return cached.image;
+  }
 
   try {
-    const buffer = await fetchAvatarBuffer(url);
-    return await loadImage(buffer);
+    const buffer = await fetchImageBuffer(url);
+    const image = await loadImage(buffer);
+    cache.set(cacheKey, { image, expiresAt: now + CACHE_TTL_MS });
+    return image;
   } catch (error) {
-    logger.warn({ err: error, robloxUserId: robloxUserId.toString() }, 'No se pudo descargar avatar de Roblox.');
+    logger.warn({ err: error, url }, 'No se pudo descargar la imagen remota.');
     return null;
   }
 };
 
-const formatNumber = (value: number): string =>
-  value >= 1000 ? `${Math.round((value / 1000) * 10) / 10}k` : `${value}`;
+const buildRobloxAvatarFallbackUrl = (robloxUserId: bigint): string =>
+  `https://www.roblox.com/headshot-thumbnail/image?userId=${robloxUserId.toString()}&width=352&height=352&format=png`;
+
+const fetchRobloxAvatarUrl = async (robloxUserId: bigint): Promise<string> => {
+  const apiUrl =
+    'https://thumbnails.roblox.com/v1/users/avatar-headshot?' +
+    `userIds=${robloxUserId.toString()}&size=352x352&format=Png&isCircular=false`;
+
+  try {
+    const response = await fetch(apiUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (compatible; DedosShopBot/1.0; +https://dedos.xyz)',
+        Accept: 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = (await response.json()) as {
+      readonly data?: ReadonlyArray<{ imageUrl?: string | null; state?: string | null }>;
+    };
+
+    const entry = data.data?.[0];
+    if (entry?.imageUrl && entry.state !== 'Pending') {
+      return entry.imageUrl;
+    }
+  } catch (error) {
+    logger.warn(
+      { err: error, robloxUserId: robloxUserId.toString() },
+      'No se pudo obtener la imagen de Roblox desde thumbnails.roblox.com.',
+    );
+  }
+
+  return buildRobloxAvatarFallbackUrl(robloxUserId);
+};
+
+const getImageMetrics = (
+  image: CanvasImageSource,
+): { width: number; height: number } | null => {
+  if (
+    typeof (image as { width?: unknown }).width === 'number' &&
+    typeof (image as { height?: unknown }).height === 'number'
+  ) {
+    return {
+      width: (image as { width: number }).width,
+      height: (image as { height: number }).height,
+    };
+  }
+
+  return null;
+};
+
+const drawBackgroundMedia = async (
+  ctx: SKRSContext2D,
+  background: MiddlemanCardBackground,
+  imageCache: Map<string, ImageCacheEntry>,
+): Promise<boolean> => {
+  const cacheKey = `bg:${background.url}`;
+  const image = await loadRemoteImage(background.url, imageCache, cacheKey);
+  if (!image) {
+    return false;
+  }
+
+  const metrics = getImageMetrics(image);
+  if (!metrics) {
+    return false;
+  }
+
+  const { width, height } = getScaledDimensions(metrics, background, CARD_WIDTH, CARD_HEIGHT);
+  const extended = ctx as ExtendedContext;
+  ctx.save();
+  if (extended.filter !== undefined) {
+    extended.filter = `blur(${background.blur}px) saturate(${background.saturate})`;
+  }
+  if (extended.globalAlpha !== undefined) {
+    extended.globalAlpha = background.opacity;
+  }
+  ctx.drawImage(image, (CARD_WIDTH - width) / 2, (CARD_HEIGHT - height) / 2, width, height);
+  ctx.restore();
+  return true;
+};
+
+const drawBannerBackground = async (
+  ctx: SKRSContext2D,
+  bannerUrl: string,
+  imageCache: Map<string, ImageCacheEntry>,
+): Promise<boolean> => {
+  const background: MiddlemanCardBackground = {
+    type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
+    url: bannerUrl,
+    fit: 'cover',
+    position: 'center',
+    opacity: 0.9,
+    blur: 0,
+    saturate: 1,
+  };
+
+  const rendered = await drawBackgroundMedia(ctx, background, imageCache);
+  if (!rendered) {
+    return false;
+  }
+
+  ctx.save();
+  ctx.fillStyle = addAlphaToHex('#050611', 0.35);
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  ctx.restore();
+  return true;
+};
+
+const getScaledDimensions = (
+  metrics: { width: number; height: number },
+  background: MiddlemanCardBackground,
+  targetWidth: number,
+  targetHeight: number,
+): { width: number; height: number } => {
+  const aspect = metrics.width / metrics.height;
+  const targetAspect = targetWidth / targetHeight;
+
+  switch (background.fit) {
+    case 'cover': {
+      if (aspect > targetAspect) {
+        const height = targetHeight;
+        const width = height * aspect;
+        return { width, height };
+      }
+      return { width: targetWidth, height: targetWidth / aspect };
+    }
+    case 'contain': {
+      if (aspect > targetAspect) {
+        const width = targetWidth;
+        return { width, height: width / aspect };
+      }
+      const height = targetHeight;
+      return { width: height * aspect, height };
+    }
+    case 'fill':
+    default:
+      return { width: targetWidth, height: targetHeight };
+  }
+};
+
+const drawBackgroundLayer = async (
+  ctx: SKRSContext2D,
+  config: MiddlemanCardConfig,
+  imageCache: Map<string, ImageCacheEntry>,
+  bannerUrl?: string | null,
+): Promise<void> => {
+  const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
+  gradient.addColorStop(0, config.gradientStart);
+  gradient.addColorStop(1, config.gradientEnd);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+
+  const hasBanner = bannerUrl ? await drawBannerBackground(ctx, bannerUrl, imageCache) : false;
+  const hasMedia =
+    hasBanner || !config.background
+      ? hasBanner
+      : await drawBackgroundMedia(ctx, config.background, imageCache);
+  if (!hasMedia) {
+    drawPattern(ctx, config.pattern, config.accent, CARD_WIDTH, CARD_HEIGHT);
+  }
+
+  const radial = ctx.createRadialGradient(CARD_WIDTH - 220, 120, 36, CARD_WIDTH - 180, 200, 420);
+  radial.addColorStop(0, addAlphaToHex(config.accentSoft, 0.9));
+  radial.addColorStop(1, addAlphaToHex(config.accentSoft, 0));
+  ctx.fillStyle = radial;
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+
+  ctx.fillStyle = addAlphaToHex('#0B0D1A', 0.45);
+  ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+};
+
+const drawSideMedia = async (
+  ctx: SKRSContext2D,
+  sideMedia: MiddlemanCardSideMedia,
+  imageCache: Map<string, ImageCacheEntry>,
+): Promise<void> => {
+  const cacheKey = `side:${sideMedia.url}`;
+  const image = await loadRemoteImage(sideMedia.url, imageCache, cacheKey);
+  if (!image) {
+    return;
+  }
+
+  const metrics = getImageMetrics(image);
+  if (!metrics) {
+    return;
+  }
+
+  const width = sideMedia.width;
+  const aspect = metrics.width / metrics.height;
+  const height = sideMedia.fit === 'contain' ? width / aspect : CARD_HEIGHT;
+  const x = sideMedia.position === 'left' ? 48 : CARD_WIDTH - width - 48;
+  const y = (CARD_HEIGHT - height) / 2 + (sideMedia.offsetY ?? 0);
+
+  ctx.save();
+  const extended = ctx as ExtendedContext;
+  if (extended.globalAlpha !== undefined) {
+    extended.globalAlpha = clamp(sideMedia.opacity, 0, 1);
+  }
+  if (sideMedia.rounded) {
+    drawRoundedRect(ctx, x - 12, y - 12, width + 24, height + 24, 28, addAlphaToHex('#0B0D1A', 0.42));
+    traceRoundedRectPath(ctx, x, y, width, height, 24);
+    ctx.clip();
+  }
+  ctx.drawImage(image, x, y, width, height);
+  ctx.restore();
+};
+
+const drawWatermark = (ctx: SKRSContext2D, text: string): void => {
+  ctx.save();
+  ctx.font = '500 18px "Segoe UI", sans-serif';
+  ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.45);
+  ctx.textAlign = 'right';
+  ctx.fillText(text, CARD_WIDTH - 72, CARD_HEIGHT - 48);
+  ctx.restore();
+};
+
+const drawBadge = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  label: string,
+  value: string,
+  accent: string,
+): void => {
+  drawRoundedRect(ctx, x, y, 190, 48, 18, addAlphaToHex(accent, 0.18), addAlphaToHex(accent, 0.45));
+  ctx.save();
+  ctx.fillStyle = addAlphaToHex(accent, 0.75);
+  ctx.font = '600 16px "Segoe UI", sans-serif';
+  ctx.fillText(label.toUpperCase(), x + 18, y + 10);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 20px "Segoe UI", sans-serif';
+  ctx.fillText(value, x + 18, y + 28);
+  ctx.restore();
+};
+
+const wrapText = (ctx: SKRSContext2D, text: string, maxWidth: number): string[] => {
+  const words = text.split(/\s+/u);
+  const lines: string[] = [];
+  let current = '';
+
+  for (const word of words) {
+    const candidate = current ? `${current} ${word}` : word;
+    if (ctx.measureText(candidate).width > maxWidth) {
+      if (current) {
+        lines.push(current);
+        current = word;
+      } else {
+        lines.push(candidate);
+        current = '';
+      }
+    } else {
+      current = candidate;
+    }
+  }
+
+  if (current) {
+    lines.push(current);
+  }
+
+  return lines;
+};
 
 class MiddlemanCardGenerator {
   private readonly cache = new Map<string, CacheEntry>();
 
+  private readonly imageCache = new Map<string, ImageCacheEntry>();
+
+  private getFromCache(name: string, attachmentName: string): AttachmentBuilder | null {
+    const entry = this.cache.get(name);
+    if (entry && entry.expiresAt > Date.now()) {
+      return new AttachmentBuilder(entry.buffer, { name: attachmentName });
+    }
+
+    if (entry) {
+      this.cache.delete(name);
+    }
+
+    return null;
+  }
+
+  private storeInCache(name: string, buffer: Buffer): void {
+    this.cache.set(name, { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
+  }
+
   public async renderProfileCard(options: ProfileCardOptions): Promise<AttachmentBuilder | null> {
     const profile = options.profile;
     const config = profile?.cardConfig ?? DEFAULT_MIDDLEMAN_CARD_CONFIG;
-    const baseName = (options.discordDisplayName ?? options.discordTag).trim();
-    const mentionMatch = baseName.match(/^<@!?(\d+)>$/u);
-    const displayLabel = mentionMatch ? "Usuario " + mentionMatch[1] : baseName;
-    const displayName = displayLabel.slice(0, 32);
-
-    const accentOverride = sanitizeHexColor(options.accentColor);
-    const bannerUrl = options.discordBannerUrl ?? null;
-
-    if (bannerUrl && isGifUrl(bannerUrl)) {
-      const gifCacheKey = createCacheKey('profile-banner-gif', {
-        tag: options.discordTag,
-        banner: bannerUrl,
-      });
-      const cachedGif = this.getFromCache(gifCacheKey, 'middleman-profile-banner.gif');
-      if (cachedGif) {
-        return cachedGif;
-      }
-
-      try {
-        const buffer = await fetchAvatarBuffer(bannerUrl);
-        this.storeInCache(gifCacheKey, buffer);
-        return new AttachmentBuilder(buffer, { name: 'middleman-profile-banner.gif' });
-      } catch (error) {
-        logger.warn({ err: error, bannerUrl }, 'No se pudo descargar banner animado de Discord.');
-      }
-    }
-
+    const scale = LAYOUT_SCALE[config.layout] ?? 1;
+    const baseName = options.discordDisplayName?.trim() || options.discordTag.trim();
     const cacheKey = createCacheKey('profile', {
       tag: options.discordTag,
-      displayName,
+      displayName: baseName,
       avatar: options.discordAvatarUrl ?? null,
-      banner: bannerUrl ?? null,
-      username: profile?.primaryIdentity?.username ?? null,
-      robloxId: profile?.primaryIdentity?.robloxUserId?.toString() ?? null,
-      vouches: profile?.vouches ?? 0,
-      ratingSum: profile?.ratingSum ?? 0,
-      ratingCount: profile?.ratingCount ?? 0,
+      banner: options.discordBannerUrl ?? null,
+      profile,
       highlight: options.highlight ?? config.highlight ?? null,
-      accentColor: accentOverride,
       cardConfig: config,
     });
 
@@ -685,196 +777,151 @@ class MiddlemanCardGenerator {
     }
 
     try {
-      const baseScale = LAYOUT_SCALE[config.layout] ?? 1;
-      const scale = Math.max(0.75, Math.min(1.6, baseScale * (config.scale ?? 1)));
       const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
       const ctx = canvas.getContext('2d');
       ctx.scale(scale, scale);
+      ctx.textBaseline = 'top';
 
-      const paletteOverrides = {
-        ...palette,
-        backgroundStart: config.gradientStart,
-        backgroundEnd: config.gradientEnd,
-        highlight: config.accent,
-        highlightSoft: config.accentSoft,
-        accent: config.accent,
-      };
-      const shouldOverrideAccent = Boolean(
-        accentOverride && config.accent === DEFAULT_MIDDLEMAN_CARD_CONFIG.accent,
-      );
-      const shouldOverrideGradient = Boolean(
-        accentOverride &&
-          config.gradientStart === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientStart &&
-          config.gradientEnd === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientEnd,
-      );
-      if (shouldOverrideAccent && accentOverride) {
-        paletteOverrides.highlight = accentOverride;
-        paletteOverrides.accent = accentOverride;
-        paletteOverrides.highlightSoft = withAlpha(accentOverride, 0.28);
-      }
-      if (shouldOverrideGradient && accentOverride) {
-        paletteOverrides.backgroundStart = adjustHexBrightness(accentOverride, -0.55);
-        paletteOverrides.backgroundEnd = adjustHexBrightness(accentOverride, -0.75);
+      await drawBackgroundLayer(ctx, config, this.imageCache, options.discordBannerUrl ?? null);
+      if (config.sideMedia) {
+        await drawSideMedia(ctx, config.sideMedia, this.imageCache);
       }
 
-      let bannerImage: CanvasImageSource | null = null;
-      if (bannerUrl) {
-        try {
-          const buffer = await fetchAvatarBuffer(bannerUrl);
-          bannerImage = await loadImage(buffer);
-        } catch (error) {
-          logger.warn({ err: error, bannerUrl }, 'No se pudo cargar banner estatico de Discord.');
-        }
-      }
-
-      drawBackground(ctx, paletteOverrides, bannerImage ? 'none' : config.pattern);
-
-      if (bannerImage) {
-        const { width: bannerWidth, height: bannerHeight } = getImageDimensions(bannerImage);
-        if (bannerWidth > 0 && bannerHeight > 0) {
-          const targetHeight = CARD_HEIGHT * 0.72;
-          const scale = Math.max(CARD_WIDTH / bannerWidth, targetHeight / bannerHeight);
-          const drawWidth = bannerWidth * scale;
-          const drawHeight = bannerHeight * scale;
-          const offsetX = (CARD_WIDTH - drawWidth) / 2;
-          ctx.save();
-          ctx.drawImage(bannerImage, offsetX, 0, drawWidth, drawHeight);
-          ctx.restore();
-
-          const fade = ctx.createLinearGradient(0, targetHeight * 0.45, 0, CARD_HEIGHT);
-          fade.addColorStop(0, 'rgba(17, 17, 32, 0)');
-          fade.addColorStop(1, 'rgba(17, 17, 32, 0.92)');
-          ctx.fillStyle = fade;
-          ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
-        }
-      }
-      const panelRect = { x: 48, y: 88, width: CARD_WIDTH - 96, height: CARD_HEIGHT - 136 };
-      const accentStroke = withAlpha(paletteOverrides.accent, 0.32);
-
-      if (config.frameStyle === 'cut') {
-        drawCutRect(ctx, panelRect.x, panelRect.y, panelRect.width, panelRect.height, 36, palette.panel, palette.border);
-        ctx.save();
-        ctx.lineWidth = 3.5;
-        ctx.strokeStyle = accentStroke;
-        ctx.shadowColor = withAlpha(paletteOverrides.accent, 0.2);
-        ctx.shadowBlur = 18;
-        ctx.beginPath();
-        traceCutRectPath(ctx, panelRect.x - 10, panelRect.y - 10, panelRect.width + 20, panelRect.height + 20, 44);
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
-      } else {
-        drawRoundedRect(
-          ctx,
-          panelRect.x,
-          panelRect.y,
-          panelRect.width,
-          panelRect.height,
-          32,
-          palette.panel,
-          palette.border,
-        );
-        ctx.save();
-        ctx.lineWidth = 2.5;
-        ctx.strokeStyle = accentStroke;
-        ctx.shadowColor = withAlpha(paletteOverrides.accent, 0.18);
-        ctx.shadowBlur = 16;
-        ctx.beginPath();
-        traceRoundedRectPath(
-          ctx,
-          panelRect.x - 12,
-          panelRect.y - 12,
-          panelRect.width + 24,
-          panelRect.height + 24,
-          40,
-        );
-        ctx.closePath();
-        ctx.stroke();
-        ctx.restore();
-      }
-
-      const initialsSource = profile?.primaryIdentity?.username ?? displayName;
-      let avatarSource: CanvasImageSource | null = null;
-      const robloxId = profile?.primaryIdentity?.robloxUserId ?? null;
-      if (robloxId !== null) {
-        avatarSource = await loadRobloxAvatar(robloxId).catch(() => null);
-      }
-
-      if (!avatarSource && options.discordAvatarUrl) {
-        try {
-          const buffer = await fetchAvatarBuffer(options.discordAvatarUrl);
-          avatarSource = await loadImage(buffer);
-        } catch (error) {
-          logger.warn({ err: error, avatarUrl: options.discordAvatarUrl }, 'No se pudo cargar avatar de Discord.');
-        }
-      }
-
-      if (!avatarSource) {
-        avatarSource = createAvatarFallback(resolveInitials(initialsSource));
-      }
-
-      const shouldOverrideBorder = Boolean(
-        accentOverride && config.avatarBorderColor === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarBorderColor,
-      );
-      const shouldOverrideGlow = Boolean(
-        accentOverride && config.avatarGlow === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarGlow,
-      );
-      const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
-      const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
-
-      drawAvatar(
+      const borderColor = addAlphaToHex(config.border.color, config.border.opacity);
+      drawRoundedRect(
         ctx,
-        avatarSource,
-        82,
-        132,
-        AVATAR_SIZE,
-        config.avatarStyle,
-        avatarBorderColor,
-        avatarGlow,
+        48,
+        80,
+        CARD_WIDTH - 96,
+        CARD_HEIGHT - 136,
+        config.frameStyle === 'cut' ? 12 : 34,
+        addAlphaToHex('#070916', 0.76),
+        borderColor,
+        config.border.width,
+        config.border.glow ? { color: addAlphaToHex(config.border.color, 0.35), blur: 24 } : undefined,
       );
 
-      const infoX = 82 + AVATAR_SIZE + 48;
-      const infoY = 152;
+      const initialsSource = profile?.primaryIdentity?.username ?? baseName;
+      const fallback = createAvatarFallback(resolveInitials(initialsSource), AVATAR_SIZE);
+      const discordAvatar =
+        options.discordAvatarUrl
+          ? await loadRemoteImage(options.discordAvatarUrl, this.imageCache, `discord:${options.discordAvatarUrl}`)
+          : null;
+      const avatarSource = discordAvatar ?? fallback;
 
-      ctx.font = '700 50px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(displayName, infoX, infoY);
+      const avatarX = 96;
+      const avatarY = 120;
+      drawAvatar(ctx, avatarSource, avatarX, avatarY, AVATAR_SIZE, {
+        borderColor: addAlphaToHex('#FFFFFF', 0.65),
+        borderWidth: 4,
+      });
+
+      const infoX = avatarX + AVATAR_SIZE + 48;
+      const infoWidth = CARD_WIDTH - infoX - 340;
+      const infoY = 128;
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 52px "Segoe UI", sans-serif';
+      ctx.fillText(baseName.slice(0, 42), infoX, infoY);
+
+      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
+      ctx.font = '500 22px "Segoe UI", sans-serif';
+      ctx.fillText(options.discordTag, infoX, infoY + 60);
 
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
-      ctx.font = '500 24px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textSecondary;
-      ctx.fillText(`Roblox: ${robloxUsername}`, infoX, infoY + 50);
+      const robloxAvatarUrl = profile?.primaryIdentity?.robloxUserId
+        ? await fetchRobloxAvatarUrl(profile.primaryIdentity.robloxUserId)
+
+        : null;
+      let robloxAvatar: CanvasImageSource | null = null;
+      if (robloxAvatarUrl) {
+        robloxAvatar = await loadRemoteImage(robloxAvatarUrl, this.imageCache, `roblox:${robloxAvatarUrl}`);
+        if (!robloxAvatar && profile?.primaryIdentity?.robloxUserId) {
+          logger.error(
+            {
+              robloxUserId: profile.primaryIdentity.robloxUserId.toString(),
+              robloxAvatarUrl,
+              username: robloxUsername,
+            },
+            'No se pudo cargar el avatar de Roblox; se usará un fallback con iniciales.',
+          );
+        }
+      }
+      const robloxCircleX = infoX;
+      const robloxCircleY = infoY + 100;
+      drawAvatar(
+        ctx,
+        robloxAvatar ?? createAvatarFallback(resolveInitials(robloxUsername), ROBLOX_AVATAR_SIZE),
+        robloxCircleX,
+        robloxCircleY,
+        ROBLOX_AVATAR_SIZE,
+        {
+          borderColor: addAlphaToHex(config.accent, 0.75),
+          borderWidth: 4,
+        },
+      );
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 34px "Segoe UI", sans-serif';
+      ctx.fillText(`Roblox · ${robloxUsername}`, robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 12);
+
+      if (profile?.primaryIdentity?.verified) {
+        ctx.fillStyle = addAlphaToHex('#3ED598', 0.92);
+        ctx.font = '600 18px "Segoe UI", sans-serif';
+        ctx.fillText('Verificado', robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 60);
+      }
 
       const ratingCount = profile?.ratingCount ?? 0;
-      const ratingValue = ratingCount > 0 ? (profile?.ratingSum ?? 0) / ratingCount : 0;
+      const ratingTotal = profile?.ratingSum ?? 0;
+      const ratingValue = ratingCount > 0 ? clamp(ratingTotal / ratingCount, 0, 5) : 0;
+      const starsX = infoX;
+      const starsY = robloxCircleY + ROBLOX_AVATAR_SIZE + 12;
+      drawRatingStars(ctx, ratingValue, starsX, starsY, 96, config.accent, config.starStyle);
+      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.82);
+      ctx.font = '600 22px "Segoe UI", sans-serif';
+      const ratingLabel =
+        ratingCount > 0
+          ? `${ratingValue.toFixed(2)} / 5 (${ratingCount} reseñas)`
+          : 'Sin reseñas registradas';
+      ctx.fillText(ratingLabel, starsX + 360, starsY + 12);
 
-      drawRatingStars(ctx, ratingValue, infoX + 12, infoY + 102, 64, paletteOverrides.accent, config.starStyle);
-
-      ctx.font = '600 22px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(`${ratingValue.toFixed(2)} / 5 ⭐`, infoX, infoY + 150);
-
-      const vouches = profile?.vouches ?? 0;
-      drawBadge(ctx, infoX, infoY + 176, 'Vouches', formatNumber(vouches), paletteOverrides.accent);
-      drawBadge(ctx, infoX + 220, infoY + 176, 'Reseñas', `${ratingCount}`, paletteOverrides.highlight);
+      let chipX = infoX;
+      const chipY = starsY + 90;
+      if (config.chips.length > 0) {
+        for (const chip of config.chips) {
+          const width = drawChip(ctx, chip.label, chip.accent ?? config.accent, chipX, chipY);
+          chipX += width;
+        }
+      }
 
       const highlightText = options.highlight ?? config.highlight ?? null;
       if (highlightText) {
-        ctx.font = '500 22px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textSecondary;
-        ctx.fillText(highlightText, infoX, infoY + 220);
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.7);
+        ctx.font = '500 20px "Segoe UI", sans-serif';
+        const lines = wrapText(ctx, highlightText, infoWidth);
+        lines.forEach((line, index) => {
+          ctx.fillText(line, infoX, chipY + 56 + index * 26);
+        });
       }
 
       if (config.customBadgeText) {
-        drawBadge(ctx, CARD_WIDTH - 300, infoY - 38, 'Rol', config.customBadgeText, paletteOverrides.accent);
+        drawBadge(ctx, CARD_WIDTH - 320, infoY - 24, 'Rol', config.customBadgeText, config.accent);
       }
 
+      const vouches = profile?.vouches ?? 0;
+      drawVouchPanel(
+        ctx,
+        config.vouchPanel,
+        vouches,
+        ratingValue,
+        ratingCount,
+        CARD_WIDTH - 320,
+        infoY + 52,
+        240,
+      );
+
       if (config.watermark) {
-        ctx.font = '500 18px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textMuted;
-        ctx.textAlign = 'right';
-        ctx.fillText(config.watermark, CARD_WIDTH - 72, CARD_HEIGHT - 52);
-        ctx.textAlign = 'left';
+        drawWatermark(ctx, config.watermark);
       }
 
       const buffer = canvas.toBuffer('image/png');
@@ -898,58 +945,81 @@ class MiddlemanCardGenerator {
     try {
       const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
       const ctx = canvas.getContext('2d');
-      drawBackground(ctx);
-      drawRoundedRect(ctx, 48, 96, CARD_WIDTH - 96, CARD_HEIGHT - 144, 28, palette.panel, palette.border);
+      ctx.textBaseline = 'top';
 
-      ctx.font = '700 44px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(`Ticket #${options.ticketCode}`, 82, 154);
+      await drawBackgroundLayer(ctx, DEFAULT_MIDDLEMAN_CARD_CONFIG, this.imageCache);
+      drawRoundedRect(ctx, 48, 88, CARD_WIDTH - 96, CARD_HEIGHT - 160, 28, addAlphaToHex('#060815', 0.85), addAlphaToHex('#FFFFFF', 0.08));
 
-      ctx.font = '500 22px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textSecondary;
-      ctx.fillText(`Middleman asignado: ${options.middlemanTag}`, 82, 190);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 46px "Segoe UI", sans-serif';
+      ctx.fillText(`Ticket #${options.ticketCode}`, 82, 120);
 
-      ctx.font = '600 20px "Segoe UI", Arial';
-      ctx.fillStyle = palette.accent;
-      ctx.fillText(`Estado: ${options.status}`, 82, 222);
+      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+      ctx.font = '500 22px "Segoe UI", sans-serif';
+      ctx.fillText(`Middleman asignado: ${options.middlemanTag}`, 82, 176);
 
-      const participantWidth = 360;
-      const participantHeight = 150;
-      options.participants.forEach((participant, index) => {
+      ctx.fillStyle = DEFAULT_MIDDLEMAN_CARD_CONFIG.accent;
+      ctx.font = '600 20px "Segoe UI", sans-serif';
+      ctx.fillText(`Estado: ${options.status}`, 82, 210);
+
+      const participantWidth = 340;
+      const participantHeight = 156;
+      options.participants.slice(0, 3).forEach((participant, index) => {
         const baseX = 82 + index * (participantWidth + 24);
-        const baseY = 260;
-        drawRoundedRect(ctx, baseX, baseY, participantWidth, participantHeight, 22, palette.panel, palette.border);
+        const baseY = 252;
+        drawRoundedRect(
+          ctx,
+          baseX,
+          baseY,
+          participantWidth,
+          participantHeight,
+          24,
+          addAlphaToHex('#0B0D1A', 0.86),
+          addAlphaToHex('#FFFFFF', 0.12),
+        );
 
-        ctx.font = '600 24px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textPrimary;
-        ctx.fillText(participant.label, baseX + 24, baseY + 48);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 24px "Segoe UI", sans-serif';
+        ctx.fillText(participant.label, baseX + 26, baseY + 24);
 
         if (participant.roblox) {
-          ctx.font = '500 18px "Segoe UI", Arial';
-          ctx.fillStyle = palette.textSecondary;
-          ctx.fillText(`Roblox: ${participant.roblox}`, baseX + 24, baseY + 78);
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+          ctx.font = '500 18px "Segoe UI", sans-serif';
+          ctx.fillText(`Roblox · ${participant.roblox}`, baseX + 26, baseY + 58);
         }
 
-        const statusColors: Record<TradeParticipantCardInfo['status'], string> = {
-          pending: '#f6ad55',
-          confirmed: '#38bdf8',
-          delivered: '#34d399',
+        const statusPalette: Record<TradeParticipantCardInfo['status'], string> = {
+          pending: '#F6AD55',
+          confirmed: '#38BDF8',
+          delivered: '#34D399',
         };
-        drawBadge(ctx, baseX + 24, baseY + 92, 'Estado', participant.status.toUpperCase(), statusColors[participant.status]);
+        drawBadge(ctx, baseX + 26, baseY + 84, 'Estado', participant.status.toUpperCase(), statusPalette[participant.status]);
 
         if (participant.items && participant.items.length > 0) {
-          ctx.font = '500 17px "Segoe UI", Arial';
-          ctx.fillStyle = palette.textMuted;
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.6);
+          ctx.font = '400 16px "Segoe UI", sans-serif';
           const items = participant.items.slice(0, 3).map((item) => `• ${item}`);
-          ctx.fillText(items.join('  '), baseX + 24, baseY + participantHeight - 20);
+          ctx.fillText(items.join('  '), baseX + 26, baseY + participantHeight - 32);
         }
       });
 
       if (options.notes) {
-        ctx.font = '500 20px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textSecondary;
-        drawRoundedRect(ctx, 82, CARD_HEIGHT - 132, CARD_WIDTH - 164, 72, 18, palette.panel, palette.border);
-        ctx.fillText(options.notes, 102, CARD_HEIGHT - 92);
+        drawRoundedRect(
+          ctx,
+          82,
+          CARD_HEIGHT - 140,
+          CARD_WIDTH - 164,
+          96,
+          20,
+          addAlphaToHex('#0B0D1A', 0.82),
+          addAlphaToHex('#FFFFFF', 0.12),
+        );
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
+        ctx.font = '500 20px "Segoe UI", sans-serif';
+        const lines = wrapText(ctx, options.notes, CARD_WIDTH - 204);
+        lines.slice(0, 3).forEach((line, index) => {
+          ctx.fillText(line, 110, CARD_HEIGHT - 120 + index * 26);
+        });
       }
 
       const buffer = canvas.toBuffer('image/png');
@@ -971,75 +1041,58 @@ class MiddlemanCardGenerator {
     try {
       const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
       const ctx = canvas.getContext('2d');
-      drawBackground(ctx);
-      drawRoundedRect(ctx, 64, 104, CARD_WIDTH - 128, CARD_HEIGHT - 168, 26, palette.panel, palette.border);
+      ctx.textBaseline = 'top';
 
-      ctx.font = '700 46px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(options.title, 96, 170);
+      await drawBackgroundLayer(ctx, DEFAULT_MIDDLEMAN_CARD_CONFIG, this.imageCache);
+      drawRoundedRect(ctx, 64, 96, CARD_WIDTH - 128, CARD_HEIGHT - 176, 28, addAlphaToHex('#060815', 0.85), addAlphaToHex('#FFFFFF', 0.08));
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '700 44px "Segoe UI", sans-serif';
+      ctx.fillText(options.title, 96, 128);
 
       if (options.subtitle) {
-        ctx.font = '500 22px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textSecondary;
-        ctx.fillText(options.subtitle, 96, 206);
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+        ctx.font = '500 22px "Segoe UI", sans-serif';
+        ctx.fillText(options.subtitle, 96, 180);
       }
 
-      const columns = Math.min(3, options.metrics.length);
-      const columnWidth = Math.min(260, Math.floor((CARD_WIDTH - 192) / columns) - 24);
+      const columnWidth = (CARD_WIDTH - 256) / 3;
+      options.metrics.slice(0, 6).forEach((metric, index) => {
+        const column = index % 3;
+        const row = Math.floor(index / 3);
+        const x = 96 + column * (columnWidth + 32);
+        const y = 232 + row * 120;
 
-      options.metrics.forEach((metric, index) => {
-        const colX = 96 + index * (columnWidth + 36);
-        drawMetricPill(ctx, colX, 240, metric.label, metric.value, Boolean(metric.emphasis));
+        drawRoundedRect(
+          ctx,
+          x,
+          y,
+          columnWidth,
+          96,
+          20,
+          addAlphaToHex('#0B0D1A', 0.82),
+          addAlphaToHex('#FFFFFF', 0.08),
+        );
+
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.65);
+        ctx.font = '600 18px "Segoe UI", sans-serif';
+        ctx.fillText(metric.label.toUpperCase(), x + 24, y + 18);
+
+        ctx.fillStyle = metric.emphasis ? '#ffffff' : addAlphaToHex('#FFFFFF', 0.86);
+        ctx.font = metric.emphasis ? '800 30px "Segoe UI", sans-serif' : '600 24px "Segoe UI", sans-serif';
+        ctx.fillText(metric.value, x + 24, y + 52);
       });
 
       const buffer = canvas.toBuffer('image/png');
       this.storeInCache(cacheKey, buffer);
       return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
     } catch (error) {
-      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas.');
+      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadísticas.');
       return null;
     }
-  }
-
-  public async render(options: {
-    discordTag: string;
-    profile: MiddlemanProfile | null;
-    discordDisplayName?: string;
-    discordAvatarUrl?: string | null;
-    discordBannerUrl?: string | null;
-    accentColor?: string | null;
-    highlight?: string | null;
-  }): Promise<AttachmentBuilder | null> {
-    return this.renderProfileCard({
-      discordTag: options.discordTag,
-      discordDisplayName: options.discordDisplayName,
-      discordAvatarUrl: options.discordAvatarUrl,
-      discordBannerUrl: options.discordBannerUrl,
-      accentColor: options.accentColor,
-      profile: options.profile,
-      highlight: options.highlight ?? null,
-    });
-  }
-
-  private getFromCache(cacheKey: string, fileName: string): AttachmentBuilder | null {
-    const entry = this.cache.get(cacheKey);
-    if (!entry) {
-      return null;
-    }
-
-    if (entry.expiresAt < Date.now()) {
-      this.cache.delete(cacheKey);
-      return null;
-    }
-
-    return new AttachmentBuilder(Buffer.from(entry.buffer), { name: fileName });
-  }
-
-  private storeInCache(cacheKey: string, buffer: Buffer): void {
-    this.cache.set(cacheKey, { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
   }
 }
 
 export const middlemanCardGenerator = new MiddlemanCardGenerator();
 
-export type { ProfileCardOptions, StatsCardOptions, TradeParticipantCardInfo, TradeSummaryCardOptions };
+export { MiddlemanCardGenerator };

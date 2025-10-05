@@ -2,11 +2,20 @@
 // RUTA: src/presentation/commands/middleman/mm.ts
 // ============================================================================
 
-import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import {
+  type ChatInputCommandInteraction,
+  type GuildMember,
+  type Message,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+} from 'discord.js';
 
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
+import { memberCardGenerator } from '@/infrastructure/external/MemberCardGenerator';
+import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
+import { PrismaMemberStatsRepository } from '@/infrastructure/repositories/PrismaMemberStatsRepository';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
@@ -20,6 +29,7 @@ import {
 } from '@/shared/utils/branding';
 
 const middlemanDirectoryRepo = new PrismaMiddlemanRepository(prisma);
+const memberStatsRepo = new PrismaMemberStatsRepository(prisma);
 
 const MENTION_PATTERN = /^(?:<@!?(\d{17,20})>|(\d{17,20}))$/u;
 
@@ -240,38 +250,90 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
 
 const handleStats = async (interaction: ChatInputCommandInteraction): Promise<void> => {
   const target = interaction.options.getUser('usuario') ?? interaction.user;
-  const profile = await middlemanDirectoryRepo.getProfile(BigInt(target.id));
+  const userId = BigInt(target.id);
 
-  if (!profile) {
-    await interaction.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Sin datos registrados',
-          description: `${target.toString()} todava no cuenta con estadsticas como middleman.`,
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+  const [profile, memberStats] = await Promise.all([
+    middlemanDirectoryRepo.getProfile(userId),
+    memberStatsRepo.getByUserId(userId),
+  ]);
+
+  if (!profile && !memberStats) {
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.warning({
+            title: 'Sin datos registrados',
+            description: `${target.toString()} todava no cuenta con estadsticas registradas.`,
+          }),
+        ],
+      }),
+    );
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
-  const description = [
-    ` Usuario de Roblox: **${robloxUsername}**`,
-    ` Vouches registrados: **${profile.vouches}**`,
-    ` Valoraciones recibidas: **${profile.ratingCount}**`,
-    ` Promedio actual: **${average.toFixed(2)} **`,
-  ].join('\n');
+  const guildMember = interaction.guild
+    ? await interaction.guild.members.fetch(target.id).catch(() => null)
+    : null;
+  let resolvedUser = target;
+  if (
+    typeof resolvedUser.banner === 'undefined' &&
+    typeof resolvedUser.fetch === 'function'
+  ) {
+    resolvedUser = await resolvedUser.fetch().catch(() => resolvedUser);
+  }
+  const displayName = guildMember?.displayName ?? target.globalName ?? target.username;
+  const discordTag = target.tag;
+  const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 256 });
+  const bannerUrl =
+    typeof resolvedUser.bannerURL === 'function'
+      ? resolvedUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+        resolvedUser.bannerURL({ size: 2048, forceStatic: false }) ??
+        undefined
+      : undefined;
+
+  let embed: ReturnType<typeof embedFactory.info>;
+  if (profile) {
+    const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+    const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+    const description = [
+      `Usuario de Roblox: **${robloxUsername}**`,
+      `Vouches registrados: **${profile.vouches}**`,
+      `Valoraciones recibidas: **${profile.ratingCount}**`,
+      `Promedio actual: **${average.toFixed(2)}**`,
+    ].join('\n');
+
+    embed = embedFactory.info({
+      title: `Estadsticas de ${displayName}`,
+      description,
+    });
+  } else {
+    const summary = memberStats!.summary();
+    const description = Object.entries(summary)
+      .map(([label, value]) => `${label}: **${value}**`)
+      .join('\n');
+
+    embed = embedFactory.info({
+      title: `Actividad de ${displayName}`,
+      description,
+    });
+  }
+
+  const cardAttachment = profile
+    ? await middlemanCardGenerator.renderProfileCard({
+        discordTag,
+        discordDisplayName: displayName,
+        discordAvatarUrl: avatarUrl,
+        discordBannerUrl: bannerUrl,
+        profile,
+      })
+    : memberStats
+    ? await memberCardGenerator.render(memberStats, displayName)
+    : null;
 
   await interaction.editReply(
     brandEditReplyOptions({
-      embeds: [
-        embedFactory.info({
-          title: `Estadsticas de ${target.username}`,
-          description,
-        }),
-      ],
+      embeds: [embed],
+      files: cardAttachment ? [cardAttachment] : undefined,
     }),
   );
 };
@@ -543,14 +605,22 @@ const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<st
 const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<string>): Promise<void> => {
   const [userArg] = args;
   const targetId = extractUserIdFromArg(message, userArg) ?? message.author.id;
-  const profile = await middlemanDirectoryRepo.getProfile(BigInt(targetId));
+  const userId = BigInt(targetId);
 
-  if (!profile) {
+  const [profile, memberStats, guildMember] = await Promise.all([
+    middlemanDirectoryRepo.getProfile(userId),
+    memberStatsRepo.getByUserId(userId),
+    message.guild
+      ? message.guild.members.fetch(targetId).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  if (!profile && !memberStats) {
     await message.reply({
       embeds: [
         embedFactory.warning({
           title: 'Sin datos registrados',
-          description: `<@${targetId}> todavia no tiene estadisticas como middleman.`,
+          description: `<@${targetId}> todavia no tiene estadisticas registradas.`,
         }),
       ],
       allowedMentions: { repliedUser: false },
@@ -558,22 +628,65 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
-  const description = [
-    `- Usuario de Roblox: **${robloxUsername}**`,
-    `- Vouches registrados: **${profile.vouches}**`,
-    `- Valoraciones recibidas: **${profile.ratingCount}**`,
-    `- Promedio actual: **${average.toFixed(2)}**`,
-  ].join('\n');
+  let user = guildMember?.user ?? null;
+  if (!user) {
+    user = await message.client.users.fetch(targetId).catch(() => null);
+  }
+  if (user && typeof user.banner === 'undefined' && typeof user.fetch === 'function') {
+    user = await user.fetch().catch(() => user);
+  }
+  const displayName = guildMember?.displayName ?? user?.globalName ?? user?.username ?? `<@${targetId}>`;
+  const discordTag = user?.tag ?? displayName;
+  const avatarUrl = user?.displayAvatarURL({ extension: 'png', size: 256 });
+  const bannerUrl =
+    user && typeof user.bannerURL === 'function'
+      ? user.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+        user.bannerURL({ size: 2048, forceStatic: false }) ??
+        undefined
+      : undefined;
+
+  let embed: ReturnType<typeof embedFactory.info>;
+  if (profile) {
+    const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+    const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+    const description = [
+      `Usuario de Roblox: **${robloxUsername}**`,
+      `Vouches registrados: **${profile.vouches}**`,
+      `Valoraciones recibidas: **${profile.ratingCount}**`,
+      `Promedio actual: **${average.toFixed(2)}**`,
+    ].join('\n');
+
+    embed = embedFactory.info({
+      title: `Estadisticas de ${displayName}`,
+      description,
+    });
+  } else {
+    const summary = memberStats!.summary();
+    const description = Object.entries(summary)
+      .map(([label, value]) => `${label}: **${value}**`)
+      .join('\n');
+
+    embed = embedFactory.info({
+      title: `Actividad de ${displayName}`,
+      description,
+    });
+  }
+
+  const cardAttachment = profile
+    ? await middlemanCardGenerator.renderProfileCard({
+        discordTag,
+        discordDisplayName: displayName,
+        discordAvatarUrl: avatarUrl ?? undefined,
+        discordBannerUrl: bannerUrl,
+        profile,
+      })
+    : memberStats
+    ? await memberCardGenerator.render(memberStats, displayName)
+    : null;
 
   await message.reply({
-    embeds: [
-      embedFactory.info({
-        title: `Estadisticas de <@${targetId}>`,
-        description,
-      }),
-    ],
+    embeds: [embed],
+    files: cardAttachment ? [cardAttachment] : undefined,
     allowedMentions: { repliedUser: false },
   });
 };
