@@ -296,23 +296,27 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
     return;
   }
 
+
   const statsView = buildStatsViewModel(profile);
+
 
   logger.info(
     {
       command: 'mm.stats',
       targetId: target.id,
       paletteAccent: profile.cardConfig.accent,
+
       metrics: statsView.metrics,
       format: 'gif',
+
     },
     'Generando estadisticas de middleman.',
   );
 
   const statsCard = await middlemanCardGenerator.renderStatsCard({
     title: `Estadsticas de ${target.username}`,
-    subtitle: statsView.subtitleParts.join(' • '),
-    metrics: statsView.metrics,
+    subtitle: subtitleParts.join(' • '),
+    metrics,
     paletteOverrides: {
       backgroundStart: profile.cardConfig.gradientStart,
       backgroundEnd: profile.cardConfig.gradientEnd,
@@ -330,9 +334,8 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
         command: 'mm.stats',
         targetId: target.id,
         attachmentName: statsCard.name,
-        format: 'gif',
       },
-      'Enviando tarjeta de estadisticas de middleman en formato GIF con decoracion personalizada.',
+      'Enviando tarjeta de estadisticas de middleman con decoracion personalizada.',
     );
 
     await interaction.editReply(
@@ -340,7 +343,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
         embeds: [
           embedFactory.info({
             title: `Estadsticas de ${target.username}`,
-            description: `Se adjunta la tarjeta animada de estadsticas con los colores configurados por ${target.toString()}.`,
+            description: `Se adjunta la tarjeta de estadsticas actualizada con los colores configurados por ${target.toString()}.`,
           }),
         ],
         files: [statsCard],
@@ -353,9 +356,8 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
     {
       command: 'mm.stats',
       targetId: target.id,
-      format: 'gif',
     },
-    'Fallo la generacion de la tarjeta de estadisticas GIF, respondiendo con embed de texto.',
+    'Fallo la generacion de la tarjeta de estadisticas, respondiendo con embed de texto.',
   );
 
   const description = [

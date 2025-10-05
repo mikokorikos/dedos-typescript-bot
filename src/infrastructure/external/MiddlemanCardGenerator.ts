@@ -1015,9 +1015,11 @@ class MiddlemanCardGenerator {
       pattern: options.pattern ?? 'grid',
       watermark: options.watermark ?? null,
     });
+
     const cached = this.getFromCache(cacheKey, 'dedos-stats-card.gif');
     if (cached) {
       logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas animada recuperada desde cache.');
+
       return cached;
     }
 
@@ -1082,13 +1084,10 @@ class MiddlemanCardGenerator {
         ctx.textAlign = 'left';
       }
 
-      const gifBuffer = encodeCanvasAsGif(ctx, CARD_WIDTH, CARD_HEIGHT);
-      this.storeInCache(cacheKey, gifBuffer);
-      logger.info(
-        { cacheKey, title: options.title },
-        'Tarjeta de estadisticas animada generada y almacenada en cache.',
-      );
-      return new AttachmentBuilder(gifBuffer, { name: 'dedos-stats-card.gif' });
+      const buffer = canvas.toBuffer('image/png');
+      this.storeInCache(cacheKey, buffer);
+      logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas generada y almacenada en cache.');
+      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas animada.');
       return null;
