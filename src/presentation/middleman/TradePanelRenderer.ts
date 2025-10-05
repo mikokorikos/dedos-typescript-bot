@@ -159,7 +159,7 @@ export class TradePanelRenderer {
       } catch (error) {
         this.logger.warn(
           { channelId: channel.id, messageId: storedMessageId, err: error },
-          'No se pudo actualizar el panel existente, se enviarÃ¡ uno nuevo.',
+          'No se pudo actualizar el panel existente, se enviará uno nuevo.',
         );
         tradePanelStore.delete(channel.id);
       }

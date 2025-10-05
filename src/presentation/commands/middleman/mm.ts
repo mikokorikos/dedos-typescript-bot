@@ -2,13 +2,19 @@
 // RUTA: src/presentation/commands/middleman/mm.ts
 // ============================================================================
 
-import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
-import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
+import {
+  type ChatInputCommandInteraction,
+  type GuildMember,
+  type Message,
+  MessageFlags,
+  PermissionFlagsBits,
+  SlashCommandBuilder,
+} from 'discord.js';
 
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
-import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import { memberCardGenerator } from '@/infrastructure/external/MemberCardGenerator';
+import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import { PrismaMemberStatsRepository } from '@/infrastructure/repositories/PrismaMemberStatsRepository';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import type { Command } from '@/presentation/commands/types';

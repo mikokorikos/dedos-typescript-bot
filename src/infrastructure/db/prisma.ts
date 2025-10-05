@@ -105,7 +105,7 @@ const runPrismaCli = async (args: string[]): Promise<void> => {
 
 const synchronizeSchemaInternal = async (): Promise<void> => {
   if (!env.DB_AUTO_APPLY_SCHEMA) {
-    logger.info('SincronizaciÃ³n automÃ¡tica del esquema deshabilitada por configuraciÃ³n.');
+    logger.info('Sincronización automática del esquema deshabilitada por configuración.');
     return;
   }
 
@@ -148,7 +148,7 @@ export const ensureDatabaseConnection = async (): Promise<void> => {
   try {
     await synchronizeDatabaseSchema();
     await prisma.$connect();
-    logger.debug('ConexiÃ³n con Prisma establecida.');
+      logger.debug('Conexión con Prisma establecida.');
   } catch (error) {
     logger.error({ err: error }, 'No fue posible conectar con la base de datos.');
     throw error;

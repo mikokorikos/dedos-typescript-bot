@@ -3,7 +3,7 @@ import { z } from 'zod';
 /** #RRGGBB (6 dígitos) */
 const HEX_COLOR_PATTERN = /^#(?:[0-9A-Fa-f]{6})$/;
 
-const normalizeHex = (value: string): string => value.toUpperCase();
+export const normalizeHex = (value: string): string => value.toUpperCase();
 
 const clamp = (value: number, min: number, max: number): number => {
   if (Number.isNaN(value)) return min;
@@ -29,7 +29,7 @@ const hexToRgb = (value: string): [number, number, number] => {
   ];
 };
 
-const addAlphaToHex = (hex: string, alpha: number): string => {
+export const addAlphaToHex = (hex: string, alpha: number): string => {
   const [r, g, b] = hexToRgb(hex);
   const safeAlpha = clamp(alpha, 0, 1);
   return `rgba(${r}, ${g}, ${b}, ${safeAlpha.toFixed(2)})`;
@@ -102,7 +102,7 @@ const ChipsSchema = z.array(ChipEntrySchema).max(5).default([]);
 const VouchPanelSchema = z
   .object({
     label: optionalShortText(24).default('Vouches'),
-    secondaryLabel: optionalShortText(24).default('Resenas'),
+    secondaryLabel: optionalShortText(24).default('Reseñas'),
     accent: HexColorSchema.optional(),
   })
   .strict();
