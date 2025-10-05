@@ -5,9 +5,12 @@
 import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 
-import { prisma } from '@/infrastructure/db/prisma';
-import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
+import { prisma } from '@/infrastructure/db/prisma';
+import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
+import { memberCardGenerator } from '@/infrastructure/external/MemberCardGenerator';
+import { PrismaMemberStatsRepository } from '@/infrastructure/repositories/PrismaMemberStatsRepository';
+import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import { env } from '@/shared/config/env';
@@ -20,6 +23,7 @@ import {
 } from '@/shared/utils/branding';
 
 const middlemanDirectoryRepo = new PrismaMiddlemanRepository(prisma);
+const memberStatsRepo = new PrismaMemberStatsRepository(prisma);
 
 const MENTION_PATTERN = /^(?:<@!?(\d{17,20})>|(\d{17,20}))$/u;
 
@@ -33,15 +37,18 @@ const parseCardConfigInput = (raw: string | null): { value: ReturnType<typeof pa
     return { value: undefined };
   }
 
-  if (trimmed.toLowerCase() === "reset") {
+  if (trimmed.toLowerCase() === 'reset') {
     return { value: null };
   }
 
   try {
     const parsedJson = JSON.parse(trimmed);
     return { value: parseMiddlemanCardConfig(parsedJson) };
-  } catch (_error) {
-    return { value: undefined, error: "Formato de decoración inválido. Proporciona JSON válido o utiliza "reset"." };
+  } catch {
+    return {
+      value: undefined,
+      error: 'Formato de decoración inválido. Proporciona JSON válido o utiliza "reset".',
+    };
   }
 };
 
@@ -237,38 +244,76 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
 
 const handleStats = async (interaction: ChatInputCommandInteraction): Promise<void> => {
   const target = interaction.options.getUser('usuario') ?? interaction.user;
-  const profile = await middlemanDirectoryRepo.getProfile(BigInt(target.id));
+  const userId = BigInt(target.id);
 
-  if (!profile) {
-    await interaction.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Sin datos registrados',
-          description: `${target.toString()} todava no cuenta con estadsticas como middleman.`,
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
+  const [profile, memberStats] = await Promise.all([
+    middlemanDirectoryRepo.getProfile(userId),
+    memberStatsRepo.getByUserId(userId),
+  ]);
+
+  if (!profile && !memberStats) {
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.warning({
+            title: 'Sin datos registrados',
+            description: `${target.toString()} todava no cuenta con estadsticas registradas.`,
+          }),
+        ],
+      }),
+    );
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
-  const description = [
-    ` Usuario de Roblox: **${robloxUsername}**`,
-    ` Vouches registrados: **${profile.vouches}**`,
-    ` Valoraciones recibidas: **${profile.ratingCount}**`,
-    ` Promedio actual: **${average.toFixed(2)} **`,
-  ].join('\n');
+  const guildMember = interaction.guild
+    ? await interaction.guild.members.fetch(target.id).catch(() => null)
+    : null;
+  const displayName = guildMember?.displayName ?? target.globalName ?? target.username;
+  const discordTag = target.tag;
+  const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 256 });
+
+  let embed: ReturnType<typeof embedFactory.info>;
+  if (profile) {
+    const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+    const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+    const description = [
+      `Usuario de Roblox: **${robloxUsername}**`,
+      `Vouches registrados: **${profile.vouches}**`,
+      `Valoraciones recibidas: **${profile.ratingCount}**`,
+      `Promedio actual: **${average.toFixed(2)}**`,
+    ].join('\n');
+
+    embed = embedFactory.info({
+      title: `Estadsticas de ${displayName}`,
+      description,
+    });
+  } else {
+    const summary = memberStats!.summary();
+    const description = Object.entries(summary)
+      .map(([label, value]) => `${label}: **${value}**`)
+      .join('\n');
+
+    embed = embedFactory.info({
+      title: `Actividad de ${displayName}`,
+      description,
+    });
+  }
+
+  const cardAttachment = profile
+    ? await middlemanCardGenerator.renderProfileCard({
+        discordTag,
+        discordDisplayName: displayName,
+        discordAvatarUrl: avatarUrl,
+        profile,
+      })
+    : memberStats
+    ? await memberCardGenerator.render(memberStats, displayName)
+    : null;
 
   await interaction.editReply(
     brandEditReplyOptions({
-      embeds: [
-        embedFactory.info({
-          title: `Estadsticas de ${target.username}`,
-          description,
-        }),
-      ],
+      embeds: [embed],
+      files: cardAttachment ? [cardAttachment] : undefined,
     }),
   );
 };
@@ -348,6 +393,10 @@ const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<st
 
   for (let i = 0; i < rawParts.length; i += 1) {
     const token = rawParts[i];
+    if (!token) {
+      continue;
+    }
+
     if (token.toLowerCase() === 'reset') {
       decorRaw = 'reset';
       usernameTokens = rawParts.slice(0, i);
@@ -453,6 +502,10 @@ const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<st
 
   for (let i = 0; i < rawParts.length; i += 1) {
     const token = rawParts[i];
+    if (!token) {
+      continue;
+    }
+
     if (token.toLowerCase() === 'reset') {
       decorRaw = 'reset';
       usernameTokens = rawParts.slice(0, i);
@@ -532,14 +585,22 @@ const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<st
 const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<string>): Promise<void> => {
   const [userArg] = args;
   const targetId = extractUserIdFromArg(message, userArg) ?? message.author.id;
-  const profile = await middlemanDirectoryRepo.getProfile(BigInt(targetId));
+  const userId = BigInt(targetId);
 
-  if (!profile) {
+  const [profile, memberStats, guildMember] = await Promise.all([
+    middlemanDirectoryRepo.getProfile(userId),
+    memberStatsRepo.getByUserId(userId),
+    message.guild
+      ? message.guild.members.fetch(targetId).catch(() => null)
+      : Promise.resolve(null),
+  ]);
+
+  if (!profile && !memberStats) {
     await message.reply({
       embeds: [
         embedFactory.warning({
           title: 'Sin datos registrados',
-          description: `<@${targetId}> todavia no tiene estadisticas como middleman.`,
+          description: `<@${targetId}> todavia no tiene estadisticas registradas.`,
         }),
       ],
       allowedMentions: { repliedUser: false },
@@ -547,22 +608,52 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
-  const description = [
-    `- Usuario de Roblox: **${robloxUsername}**`,
-    `- Vouches registrados: **${profile.vouches}**`,
-    `- Valoraciones recibidas: **${profile.ratingCount}**`,
-    `- Promedio actual: **${average.toFixed(2)}**`,
-  ].join('\n');
+  const user = guildMember?.user ?? (await message.client.users.fetch(targetId).catch(() => null));
+  const displayName = guildMember?.displayName ?? user?.globalName ?? user?.username ?? `<@${targetId}>`;
+  const discordTag = user?.tag ?? displayName;
+  const avatarUrl = user?.displayAvatarURL({ extension: 'png', size: 256 });
+
+  let embed: ReturnType<typeof embedFactory.info>;
+  if (profile) {
+    const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+    const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+    const description = [
+      `Usuario de Roblox: **${robloxUsername}**`,
+      `Vouches registrados: **${profile.vouches}**`,
+      `Valoraciones recibidas: **${profile.ratingCount}**`,
+      `Promedio actual: **${average.toFixed(2)}**`,
+    ].join('\n');
+
+    embed = embedFactory.info({
+      title: `Estadisticas de ${displayName}`,
+      description,
+    });
+  } else {
+    const summary = memberStats!.summary();
+    const description = Object.entries(summary)
+      .map(([label, value]) => `${label}: **${value}**`)
+      .join('\n');
+
+    embed = embedFactory.info({
+      title: `Actividad de ${displayName}`,
+      description,
+    });
+  }
+
+  const cardAttachment = profile
+    ? await middlemanCardGenerator.renderProfileCard({
+        discordTag,
+        discordDisplayName: displayName,
+        discordAvatarUrl: avatarUrl ?? undefined,
+        profile,
+      })
+    : memberStats
+    ? await memberCardGenerator.render(memberStats, displayName)
+    : null;
 
   await message.reply({
-    embeds: [
-      embedFactory.info({
-        title: `Estadisticas de <@${targetId}>`,
-        description,
-      }),
-    ],
+    embeds: [embed],
+    files: cardAttachment ? [cardAttachment] : undefined,
     allowedMentions: { repliedUser: false },
   });
 };
@@ -622,6 +713,7 @@ const handlePrefixDirectoryList = async (message: Message, args: ReadonlyArray<s
   });
 };
 
+
 export const middlemanDirectoryCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('mm')
@@ -638,7 +730,7 @@ export const middlemanDirectoryCommand: Command = {
             .setMinLength(3)
             .setMaxLength(50)
             .setRequired(true),
-        ),
+        )
         .addStringOption((option) =>
           option
             .setName('decor')
@@ -658,12 +750,12 @@ export const middlemanDirectoryCommand: Command = {
             .setMinLength(3)
             .setMaxLength(50)
             .setRequired(false),
+        )
         .addStringOption((option) =>
           option
             .setName('decor')
             .setDescription('Configuración JSON para personalizar la tarjeta (usa "reset" para restablecer)')
             .setRequired(false),
-        ),
         ),
     )
     .addSubcommand((sub) =>
