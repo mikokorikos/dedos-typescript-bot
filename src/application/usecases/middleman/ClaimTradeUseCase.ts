@@ -96,17 +96,17 @@ export class ClaimTradeUseCase {
       ManageChannels: false,
     });
 
-    const infoEmbed = this.embeds.info({
-      title: '🛡️ Middleman asignado',
-      description: [
-        `**Aviso:** ${middlemanMention} ha reclamado este ticket.`,
-        '',
-        `**Middleman:** ${middlemanMention}`,
-        `**Roblox:** ${robloxUsername}`,
-        `**Vouches acumulados:** ${vouches}`,
-        `**Calificacion:** ${ratingLabel}`,
-      ].join('\n'),
-    });
+      const infoEmbed = this.embeds.info({
+        title: '🛡️ Middleman asignado',
+        description: [
+          `**Aviso:** ${middlemanMention} ha reclamado este ticket.`,
+          '',
+          `**Middleman:** ${middlemanMention}`,
+          `**Roblox:** ${robloxUsername}`,
+          `**Vouches acumulados:** ${vouches}`,
+          `**Calificación:** ${ratingLabel}`,
+        ].join('\n'),
+      });
 
     await channel.send(
       brandMessageOptions(

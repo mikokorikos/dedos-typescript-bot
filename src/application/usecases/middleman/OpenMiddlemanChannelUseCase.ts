@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // RUTA: src/application/usecases/middleman/OpenMiddlemanChannelUseCase.ts
 // ============================================================================
 
@@ -57,7 +57,7 @@ export class OpenMiddlemanChannelUseCase {
     const ownerId = BigInt(payload.userId);
     const guildId = BigInt(payload.guildId);
 
-    this.logger.debug({ ownerId: payload.userId }, 'Validando lÃ­mite de tickets abiertos.');
+    this.logger.debug({ ownerId: payload.userId }, 'Validando límite de tickets abiertos.');
     const openTickets = await this.ticketRepo.countOpenByOwner(ownerId);
     if (openTickets >= MAX_OPEN_TICKETS) {
       throw new TooManyOpenTicketsError(MAX_OPEN_TICKETS);
@@ -67,7 +67,7 @@ export class OpenMiddlemanChannelUseCase {
     const botId = guild.members.me?.id;
 
     if (!botId) {
-      throw new ChannelCreationError('El bot no estÃ¡ presente en el gremio.');
+      throw new ChannelCreationError('El bot no está presente en el gremio.');
     }
 
     this.logger.debug({ channelName, guildId: payload.guildId }, 'Creando canal de middleman.');
@@ -76,7 +76,7 @@ export class OpenMiddlemanChannelUseCase {
 
     if (!partnerId) {
       throw new ValidationFailedError({
-        partnerTag: 'Debes mencionar o introducir el ID de la persona con la que haras el trade.',
+        partnerTag: 'Debes mencionar o introducir el ID de la persona con la que harás el trade.',
       });
     }
 
@@ -149,7 +149,7 @@ export class OpenMiddlemanChannelUseCase {
           partnerId: partnerId.toString(),
           categoryId: payload.categoryId,
         },
-        'FallÃ³ la creaciÃ³n del canal de middleman.',
+        'Falló la creación del canal de middleman.',
       );
       throw new ChannelCreationError(String(error));
     }
@@ -221,11 +221,11 @@ export class OpenMiddlemanChannelUseCase {
         brandMessageOptions({
           embeds: [
             this.embeds.info({
-              title: 'InformaciÃ³n del trade',
+              title: 'Información del trade',
               description: [
                 '1. Completa tus datos con **Mis datos de trade**.',
-                '2. Confirma cuando estÃ©s listo usando **Confirmar trade**.',
-                '3. El equipo middleman serÃ¡ notificado despuÃ©s de que ambos traders confirmen.',
+                '2. Confirma cuando estés listo usando **Confirmar trade**.',
+                '3. El equipo middleman será notificado después de que ambos traders confirmen.',
               ].join('\n'),
             }),
           ],

@@ -1,4 +1,4 @@
-﻿// ============================================================================
+// ============================================================================
 // RUTA: src/shared/errors/domain.errors.ts
 // ============================================================================
 
@@ -8,7 +8,7 @@ export class TicketNotFoundError extends DedosError {
   public constructor(ticketId: string) {
     super({
       code: 'TICKET_NOT_FOUND',
-      message: `No se encontrÃ³ el ticket con identificador ${ticketId}.`,
+      message: `No se encontró el ticket con identificador ${ticketId}.`,
       metadata: { ticketId },
       exposeMessage: true,
     });
@@ -19,7 +19,7 @@ export class UnauthorizedActionError extends DedosError {
   public constructor(action: string) {
     super({
       code: 'UNAUTHORIZED_ACTION',
-      message: 'No tienes permisos para realizar esta acciÃ³n.',
+      message: 'No tienes permisos para realizar esta acción.',
       metadata: { action },
       exposeMessage: true,
     });
@@ -30,7 +30,7 @@ export class InvalidRatingError extends DedosError {
   public constructor(rating: number) {
     super({
       code: 'INVALID_RATING',
-      message: 'La valoraciÃ³n debe estar entre 1 y 5 estrellas.',
+      message: 'La valoración debe estar entre 1 y 5 estrellas.',
       metadata: { rating },
       exposeMessage: true,
     });
@@ -41,7 +41,7 @@ export class InvalidSnowflakeError extends DedosError {
   public constructor(value: string) {
     super({
       code: 'INVALID_SNOWFLAKE',
-      message: 'El identificador de Discord proporcionado no es vÃ¡lido.',
+      message: 'El identificador de Discord proporcionado no es válido.',
       metadata: { value },
       exposeMessage: true,
     });
@@ -52,7 +52,7 @@ export class InvalidTicketStateError extends DedosError {
   public constructor(current: unknown, expected: unknown) {
     super({
       code: 'INVALID_TICKET_STATE',
-      message: 'El ticket no se encuentra en un estado vÃ¡lido para esta operaciÃ³n.',
+      message: 'El ticket no se encuentra en un estado válido para esta operación.',
       metadata: { current, expected },
       exposeMessage: true,
     });
@@ -74,7 +74,7 @@ export class TooManyOpenTicketsError extends DedosError {
   public constructor(limit: number) {
     super({
       code: 'TOO_MANY_OPEN_TICKETS',
-      message: `Has alcanzado el lÃ­mite de ${limit} tickets abiertos simultÃ¡neamente.`,
+      message: `Has alcanzado el límite de ${limit} tickets abiertos simultáneamente.`,
       metadata: { limit },
       exposeMessage: true,
     });
@@ -85,7 +85,7 @@ export class InvalidTradeStateError extends DedosError {
   public constructor(current: unknown, expected: unknown) {
     super({
       code: 'INVALID_TRADE_STATE',
-      message: 'La transacciÃ³n no estÃ¡ en un estado vÃ¡lido para completar la operaciÃ³n.',
+      message: 'La transacción no está en un estado válido para completar la operación.',
       metadata: { current, expected },
       exposeMessage: true,
     });
@@ -96,7 +96,7 @@ export class TradesNotConfirmedError extends DedosError {
   public constructor(ticketId: number) {
     super({
       code: 'TRADES_NOT_CONFIRMED',
-      message: 'Existen participantes que no han confirmado la transacciÃ³n.',
+      message: 'Existen participantes que no han confirmado la transacción.',
       metadata: { ticketId },
       exposeMessage: true,
     });
@@ -106,7 +106,7 @@ export class FinalizationPendingError extends DedosError {
   public constructor(ticketId: number) {
     super({
       code: 'TRADE_FINALIZATION_PENDING',
-      message: 'Ambos traders deben confirmar que el intercambio se completo antes de cerrar el ticket.',
+      message: 'Ambos traders deben confirmar que el intercambio se completó antes de cerrar el ticket.',
       metadata: { ticketId },
       exposeMessage: true,
     });
@@ -129,7 +129,7 @@ export class TradeAlreadyConfirmedError extends DedosError {
   public constructor() {
     super({
       code: 'TRADE_ALREADY_CONFIRMED',
-      message: 'Ya confirmaste tu participaciÃ³n en este trade.',
+      message: 'Ya confirmaste tu participación en este trade.',
       exposeMessage: true,
     });
   }
@@ -173,7 +173,7 @@ export class MiddlemanNotFoundError extends DedosError {
   public constructor(userId: string) {
     super({
       code: 'MIDDLEMAN_NOT_FOUND',
-      message: 'El middleman solicitado no estÃ¡ disponible.',
+      message: 'El middleman solicitado no está disponible.',
       metadata: { userId },
       exposeMessage: true,
     });
@@ -184,7 +184,7 @@ export class TradeLimitExceededError extends DedosError {
   public constructor(limit: number) {
     super({
       code: 'TRADE_LIMIT_EXCEEDED',
-      message: 'Has alcanzado el lÃ­mite de transacciones simultÃ¡neas.',
+      message: 'Has alcanzado el límite de transacciones simultáneas.',
       metadata: { limit },
       exposeMessage: true,
     });
@@ -195,7 +195,7 @@ export class DuplicateReviewError extends DedosError {
   public constructor(ticketId: string, authorId: string) {
     super({
       code: 'DUPLICATE_REVIEW',
-      message: 'Ya has enviado una reseÃ±a para este ticket.',
+      message: 'Ya has enviado una reseña para este ticket.',
       metadata: { ticketId, authorId },
       exposeMessage: true,
     });
@@ -215,7 +215,7 @@ export class DiscordEntityCreationError extends DedosError {
 }
 
 export class DatabaseUnavailableError extends DedosError {
-  public constructor(message = 'La base de datos no estÃ¡ disponible en este momento.') {
+  public constructor(message = 'La base de datos no está disponible en este momento.') {
     super({
       code: 'DATABASE_UNAVAILABLE',
       message,
@@ -228,7 +228,7 @@ export class ValidationFailedError extends DedosError {
   public constructor(details: Record<string, unknown>) {
     super({
       code: 'VALIDATION_FAILED',
-      message: 'Los datos proporcionados no son vÃ¡lidos.',
+      message: 'Los datos proporcionados no son válidos.',
       metadata: details,
       exposeMessage: true,
     });
