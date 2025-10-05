@@ -64,12 +64,26 @@ export class ClaimTradeUseCase {
     const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
     const vouches = profile?.vouches ?? 0;
 
-    const middlemanMention = '<@' + payload.middlemanId + '>';
+    const middlemanMention = `<@${payload.middlemanId}>`;
+    const middlemanMember = await channel.guild.members.fetch(payload.middlemanId).catch(() => null);
+    const middlemanUser = middlemanMember?.user ?? null;
+    const middlemanDisplayName = middlemanMember?.displayName ?? middlemanUser?.username ?? null;
+    const middlemanAvatarUrl = (() => {
+      if (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function') {
+        return middlemanMember.displayAvatarURL({ extension: 'png', size: 256 });
+      }
+
+      if (middlemanUser && typeof middlemanUser.displayAvatarURL === 'function') {
+        return middlemanUser.displayAvatarURL({ extension: 'png', size: 256 });
+      }
+
+      return undefined;
+    })();
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
-      discordDisplayName: payload.middlemanDisplayName,
-      discordAvatarUrl: payload.middlemanAvatarUrl,
+      discordDisplayName: middlemanDisplayName,
+      discordAvatarUrl: middlemanAvatarUrl,
       profile,
       highlight: 'Disponible para asistencia',
     });

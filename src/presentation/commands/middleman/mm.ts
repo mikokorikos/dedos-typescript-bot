@@ -5,9 +5,9 @@
 import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 
+import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
-import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import { env } from '@/shared/config/env';
@@ -33,15 +33,18 @@ const parseCardConfigInput = (raw: string | null): { value: ReturnType<typeof pa
     return { value: undefined };
   }
 
-  if (trimmed.toLowerCase() === "reset") {
+  if (trimmed.toLowerCase() === 'reset') {
     return { value: null };
   }
 
   try {
     const parsedJson = JSON.parse(trimmed);
     return { value: parseMiddlemanCardConfig(parsedJson) };
-  } catch (_error) {
-    return { value: undefined, error: "Formato de decoración inválido. Proporciona JSON válido o utiliza "reset"." };
+  } catch {
+    return {
+      value: undefined,
+      error: 'Formato de decoración inválido. Proporciona JSON válido o utiliza "reset".',
+    };
   }
 };
 
@@ -348,6 +351,10 @@ const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<st
 
   for (let i = 0; i < rawParts.length; i += 1) {
     const token = rawParts[i];
+    if (!token) {
+      continue;
+    }
+
     if (token.toLowerCase() === 'reset') {
       decorRaw = 'reset';
       usernameTokens = rawParts.slice(0, i);
@@ -453,6 +460,10 @@ const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<st
 
   for (let i = 0; i < rawParts.length; i += 1) {
     const token = rawParts[i];
+    if (!token) {
+      continue;
+    }
+
     if (token.toLowerCase() === 'reset') {
       decorRaw = 'reset';
       usernameTokens = rawParts.slice(0, i);
@@ -622,6 +633,7 @@ const handlePrefixDirectoryList = async (message: Message, args: ReadonlyArray<s
   });
 };
 
+
 export const middlemanDirectoryCommand: Command = {
   data: new SlashCommandBuilder()
     .setName('mm')
@@ -638,7 +650,7 @@ export const middlemanDirectoryCommand: Command = {
             .setMinLength(3)
             .setMaxLength(50)
             .setRequired(true),
-        ),
+        )
         .addStringOption((option) =>
           option
             .setName('decor')
@@ -658,12 +670,12 @@ export const middlemanDirectoryCommand: Command = {
             .setMinLength(3)
             .setMaxLength(50)
             .setRequired(false),
+        )
         .addStringOption((option) =>
           option
             .setName('decor')
             .setDescription('Configuración JSON para personalizar la tarjeta (usa "reset" para restablecer)')
             .setRequired(false),
-        ),
         ),
     )
     .addSubcommand((sub) =>
