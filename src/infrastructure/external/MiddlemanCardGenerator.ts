@@ -831,6 +831,7 @@ class MiddlemanCardGenerator {
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       const robloxAvatarUrl = profile?.primaryIdentity?.robloxUserId
         ? await fetchRobloxAvatarUrl(profile.primaryIdentity.robloxUserId)
+
         : null;
       let robloxAvatar: CanvasImageSource | null = null;
       if (robloxAvatarUrl) {
