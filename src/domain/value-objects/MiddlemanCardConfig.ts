@@ -37,6 +37,12 @@ const LayoutSchema = z.enum(['compact', 'standard', 'expanded']);
 const PatternSchema = z.enum(['none', 'grid', 'waves', 'circuit', 'mesh']);
 const StarStyleSchema = z.enum(['sharp', 'rounded']);
 const FrameStyleSchema = z.enum(['rounded', 'cut']);
+const AvatarStyleSchema = z.enum(['circle', 'rounded', 'hexagon']);
+const ScaleSchema = z
+  .coerce.number()
+  .min(0.85, 'El tamaño mínimo permitido es 0.85.')
+  .max(1.35, 'El tamaño máximo permitido es 1.35.')
+  .transform((value) => Number(value.toFixed(2)));
 
 const optionalShortText = (max: number) => z.string().trim().min(1).max(max);
 
@@ -53,19 +59,29 @@ const MiddlemanCardConfigBaseSchema = z
     starStyle: StarStyleSchema.default('sharp'),
     frameStyle: FrameStyleSchema.default('rounded'),
     customBadgeText: optionalShortText(24).optional(),
+    scale: ScaleSchema.default(1),
+    avatarStyle: AvatarStyleSchema.default('circle'),
+    avatarBorderColor: HexColorSchema.optional(),
+    avatarGlow: z.string().trim().min(1).max(32).optional(),
   })
   .strict();
 
 export type MiddlemanCardConfig = z.infer<typeof MiddlemanCardConfigBaseSchema> & {
   readonly accentSoft: string;
+  readonly avatarBorderColor: string;
+  readonly avatarGlow: string;
 };
 
 export const MiddlemanCardConfigSchema = MiddlemanCardConfigBaseSchema.transform((config) => {
   const accentSoft = config.accentSoft ? normalizeHex(config.accentSoft) : addAlphaToHex(config.accent, 0.32);
+  const avatarBorderColor = config.avatarBorderColor ? normalizeHex(config.avatarBorderColor) : config.accent;
+  const avatarGlow = config.avatarGlow ?? addAlphaToHex(config.accent, 0.6);
 
   return {
     ...config,
     accentSoft,
+    avatarBorderColor,
+    avatarGlow,
   } satisfies MiddlemanCardConfig;
 });
 
@@ -86,6 +102,10 @@ export const serializeMiddlemanCardConfig = (
   starStyle: config.starStyle,
   frameStyle: config.frameStyle,
   ...(config.customBadgeText ? { customBadgeText: config.customBadgeText } : {}),
+  scale: config.scale.toString(),
+  avatarStyle: config.avatarStyle,
+  avatarBorderColor: config.avatarBorderColor,
+  avatarGlow: config.avatarGlow,
 });
 
 export const DEFAULT_MIDDLEMAN_CARD_CONFIG = parseMiddlemanCardConfig({});

@@ -39,10 +39,73 @@ const palette = {
   badgeBackground: 'rgba(255, 255, 255, 0.08)',
 };
 
+const HEX_COLOR_PATTERN = /^#?[0-9A-F]{6}$/iu;
+
+const sanitizeHexColor = (input: string | null | undefined): string | null => {
+  if (!input) {
+    return null;
+  }
+
+  const normalized = input.trim().toUpperCase();
+  const prefixed = normalized.startsWith('#') ? normalized : `#${normalized}`;
+  return HEX_COLOR_PATTERN.test(prefixed) ? prefixed : null;
+};
+
+const clampByte = (value: number): number => Math.max(0, Math.min(255, Math.round(value)));
+
+const componentToHex = (value: number): string => value.toString(16).padStart(2, '0').toUpperCase();
+
+const rgbToHex = (r: number, g: number, b: number): string =>
+  `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+
+const adjustHexBrightness = (hex: string, factor: number): string => {
+  const sanitized = sanitizeHexColor(hex);
+  if (!sanitized) {
+    return hex;
+  }
+
+  const r = Number.parseInt(sanitized.slice(1, 3), 16);
+  const g = Number.parseInt(sanitized.slice(3, 5), 16);
+  const b = Number.parseInt(sanitized.slice(5, 7), 16);
+
+  const adjust = (channel: number): number => {
+    if (factor >= 0) {
+      return clampByte(channel + (255 - channel) * Math.min(factor, 1));
+    }
+
+    return clampByte(channel * (1 + Math.max(factor, -1)));
+  };
+
+  return rgbToHex(adjust(r), adjust(g), adjust(b));
+};
+
+const getImageDimensions = (source: CanvasImageSource): { width: number; height: number } => {
+  if (typeof source === 'object' && source !== null) {
+    const maybeWidth = (source as { width?: number }).width;
+    const maybeHeight = (source as { height?: number }).height;
+    if (typeof maybeWidth === 'number' && typeof maybeHeight === 'number') {
+      return { width: maybeWidth, height: maybeHeight };
+    }
+  }
+
+  return { width: CARD_WIDTH, height: CARD_HEIGHT };
+};
+
+const isGifUrl = (url: string): boolean => {
+  try {
+    const parsed = new URL(url);
+    return parsed.pathname.toLowerCase().endsWith('.gif');
+  } catch {
+    return url.toLowerCase().includes('.gif');
+  }
+};
+
 interface ProfileCardOptions {
   readonly discordTag: string;
   readonly discordDisplayName?: string | null;
   readonly discordAvatarUrl?: string | null;
+  readonly discordBannerUrl?: string | null;
+  readonly accentColor?: string | null;
   readonly profile: MiddlemanProfile | null;
   readonly highlight?: string | null;
 }
@@ -114,6 +177,26 @@ const drawBackground = (
   drawPattern(ctx, pattern, paletteOverrides.accent, CARD_WIDTH, CARD_HEIGHT);
 };
 
+const traceRoundedRectPath = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  radius: number,
+): void => {
+  const clampedRadius = Math.max(0, Math.min(radius, Math.min(width, height) / 2));
+  ctx.moveTo(x + clampedRadius, y);
+  ctx.lineTo(x + width - clampedRadius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + clampedRadius);
+  ctx.lineTo(x + width, y + height - clampedRadius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - clampedRadius, y + height);
+  ctx.lineTo(x + clampedRadius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - clampedRadius);
+  ctx.lineTo(x, y + clampedRadius);
+  ctx.quadraticCurveTo(x, y, x + clampedRadius, y);
+};
+
 const drawRoundedRect = (
   ctx: SKRSContext2D,
   x: number,
@@ -125,15 +208,7 @@ const drawRoundedRect = (
   strokeStyle?: string,
 ): void => {
   ctx.beginPath();
-  ctx.moveTo(x + radius, y);
-  ctx.lineTo(x + width - radius, y);
-  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
-  ctx.lineTo(x + width, y + height - radius);
-  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
-  ctx.lineTo(x + radius, y + height);
-  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
-  ctx.lineTo(x, y + radius);
-  ctx.quadraticCurveTo(x, y, x + radius, y);
+  traceRoundedRectPath(ctx, x, y, width, height, radius);
   ctx.closePath();
 
   ctx.fillStyle = fillStyle;
@@ -145,19 +220,123 @@ const drawRoundedRect = (
   }
 };
 
-const drawAvatar = (ctx: SKRSContext2D, source: CanvasImageSource, x: number, y: number, size: number): void => {
+const traceCutRectPath = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  cut: number,
+): void => {
+  const cutSize = Math.max(0, Math.min(cut, Math.min(width, height) / 2));
+  ctx.moveTo(x + cutSize, y);
+  ctx.lineTo(x + width - cutSize, y);
+  ctx.lineTo(x + width, y + cutSize);
+  ctx.lineTo(x + width, y + height - cutSize);
+  ctx.lineTo(x + width - cutSize, y + height);
+  ctx.lineTo(x + cutSize, y + height);
+  ctx.lineTo(x, y + height - cutSize);
+  ctx.lineTo(x, y + cutSize);
+};
+
+const drawCutRect = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  cut: number,
+  fillStyle: string,
+  strokeStyle?: string,
+): void => {
+  ctx.beginPath();
+  traceCutRectPath(ctx, x, y, width, height, cut);
+  ctx.closePath();
+
+  ctx.fillStyle = fillStyle;
+  ctx.fill();
+
+  if (strokeStyle) {
+    ctx.strokeStyle = strokeStyle;
+    ctx.stroke();
+  }
+};
+
+type AvatarShape = MiddlemanCardConfig['avatarStyle'];
+
+const traceAvatarPath = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  size: number,
+  shape: AvatarShape,
+): void => {
+  const centerX = x + size / 2;
+  const centerY = y + size / 2;
+
+  switch (shape) {
+    case 'hexagon': {
+      const radius = size / 2;
+      const step = Math.PI / 3;
+      ctx.moveTo(centerX + radius, centerY);
+      for (let i = 1; i < 6; i += 1) {
+        const angle = step * i;
+        ctx.lineTo(centerX + radius * Math.cos(angle), centerY + radius * Math.sin(angle));
+      }
+      break;
+    }
+    case 'rounded': {
+      traceRoundedRectPath(ctx, x, y, size, size, size * 0.28);
+      break;
+    }
+    case 'circle':
+    default: {
+      ctx.arc(centerX, centerY, size / 2, 0, Math.PI * 2);
+      break;
+    }
+  }
+};
+
+const drawAvatar = (
+  ctx: SKRSContext2D,
+  source: CanvasImageSource,
+  x: number,
+  y: number,
+  size: number,
+  shape: AvatarShape,
+  borderColor: string,
+  glowColor: string,
+): void => {
   ctx.save();
   ctx.beginPath();
-  ctx.arc(x + size / 2, y + size / 2, size / 2, 0, Math.PI * 2);
+  traceAvatarPath(ctx, x, y, size, shape);
   ctx.closePath();
-  ctx.shadowColor = 'rgba(0,0,0,0.45)';
-  ctx.shadowBlur = 24;
-  ctx.fillStyle = 'rgba(0,0,0,0.35)';
-  ctx.fill();
-  ctx.clip();
+
+  if (glowColor) {
+    ctx.shadowColor = glowColor;
+    ctx.shadowBlur = 28;
+    ctx.fillStyle = glowColor;
+    ctx.fill();
+  }
+
   ctx.shadowBlur = 0;
+  ctx.beginPath();
+  traceAvatarPath(ctx, x, y, size, shape);
+  ctx.closePath();
+  ctx.clip();
   ctx.drawImage(source, x, y, size, size);
   ctx.restore();
+
+  if (borderColor) {
+    ctx.save();
+    ctx.beginPath();
+    traceAvatarPath(ctx, x, y, size, shape);
+    ctx.closePath();
+    ctx.lineWidth = 6;
+    ctx.strokeStyle = withAlpha(borderColor, 0.75);
+    ctx.stroke();
+    ctx.restore();
+  }
 };
 
 const withAlpha = (color: string, alpha: number): string => {
@@ -449,8 +628,6 @@ const loadRobloxAvatar = async (robloxUserId: bigint): Promise<CanvasImageSource
   }
 };
 
-};
-
 const formatNumber = (value: number): string =>
   value >= 1000 ? `${Math.round((value / 1000) * 10) / 10}k` : `${value}`;
 
@@ -465,16 +642,40 @@ class MiddlemanCardGenerator {
     const displayLabel = mentionMatch ? "Usuario " + mentionMatch[1] : baseName;
     const displayName = displayLabel.slice(0, 32);
 
+    const accentOverride = sanitizeHexColor(options.accentColor);
+    const bannerUrl = options.discordBannerUrl ?? null;
+
+    if (bannerUrl && isGifUrl(bannerUrl)) {
+      const gifCacheKey = createCacheKey('profile-banner-gif', {
+        tag: options.discordTag,
+        banner: bannerUrl,
+      });
+      const cachedGif = this.getFromCache(gifCacheKey, 'middleman-profile-banner.gif');
+      if (cachedGif) {
+        return cachedGif;
+      }
+
+      try {
+        const buffer = await fetchAvatarBuffer(bannerUrl);
+        this.storeInCache(gifCacheKey, buffer);
+        return new AttachmentBuilder(buffer, { name: 'middleman-profile-banner.gif' });
+      } catch (error) {
+        logger.warn({ err: error, bannerUrl }, 'No se pudo descargar banner animado de Discord.');
+      }
+    }
+
     const cacheKey = createCacheKey('profile', {
       tag: options.discordTag,
       displayName,
       avatar: options.discordAvatarUrl ?? null,
+      banner: bannerUrl ?? null,
       username: profile?.primaryIdentity?.username ?? null,
       robloxId: profile?.primaryIdentity?.robloxUserId?.toString() ?? null,
       vouches: profile?.vouches ?? 0,
       ratingSum: profile?.ratingSum ?? 0,
       ratingCount: profile?.ratingCount ?? 0,
       highlight: options.highlight ?? config.highlight ?? null,
+      accentColor: accentOverride,
       cardConfig: config,
     });
 
@@ -484,7 +685,8 @@ class MiddlemanCardGenerator {
     }
 
     try {
-      const scale = LAYOUT_SCALE[config.layout] ?? 1;
+      const baseScale = LAYOUT_SCALE[config.layout] ?? 1;
+      const scale = Math.max(0.75, Math.min(1.6, baseScale * (config.scale ?? 1)));
       const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
       const ctx = canvas.getContext('2d');
       ctx.scale(scale, scale);
@@ -497,9 +699,99 @@ class MiddlemanCardGenerator {
         highlightSoft: config.accentSoft,
         accent: config.accent,
       };
+      const shouldOverrideAccent = Boolean(
+        accentOverride && config.accent === DEFAULT_MIDDLEMAN_CARD_CONFIG.accent,
+      );
+      const shouldOverrideGradient = Boolean(
+        accentOverride &&
+          config.gradientStart === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientStart &&
+          config.gradientEnd === DEFAULT_MIDDLEMAN_CARD_CONFIG.gradientEnd,
+      );
+      if (shouldOverrideAccent && accentOverride) {
+        paletteOverrides.highlight = accentOverride;
+        paletteOverrides.accent = accentOverride;
+        paletteOverrides.highlightSoft = withAlpha(accentOverride, 0.28);
+      }
+      if (shouldOverrideGradient && accentOverride) {
+        paletteOverrides.backgroundStart = adjustHexBrightness(accentOverride, -0.55);
+        paletteOverrides.backgroundEnd = adjustHexBrightness(accentOverride, -0.75);
+      }
 
-      drawBackground(ctx, paletteOverrides, config.pattern);
-      drawRoundedRect(ctx, 48, 88, CARD_WIDTH - 96, CARD_HEIGHT - 136, 32, palette.panel, palette.border);
+      let bannerImage: CanvasImageSource | null = null;
+      if (bannerUrl) {
+        try {
+          const buffer = await fetchAvatarBuffer(bannerUrl);
+          bannerImage = await loadImage(buffer);
+        } catch (error) {
+          logger.warn({ err: error, bannerUrl }, 'No se pudo cargar banner estatico de Discord.');
+        }
+      }
+
+      drawBackground(ctx, paletteOverrides, bannerImage ? 'none' : config.pattern);
+
+      if (bannerImage) {
+        const { width: bannerWidth, height: bannerHeight } = getImageDimensions(bannerImage);
+        if (bannerWidth > 0 && bannerHeight > 0) {
+          const targetHeight = CARD_HEIGHT * 0.72;
+          const scale = Math.max(CARD_WIDTH / bannerWidth, targetHeight / bannerHeight);
+          const drawWidth = bannerWidth * scale;
+          const drawHeight = bannerHeight * scale;
+          const offsetX = (CARD_WIDTH - drawWidth) / 2;
+          ctx.save();
+          ctx.drawImage(bannerImage, offsetX, 0, drawWidth, drawHeight);
+          ctx.restore();
+
+          const fade = ctx.createLinearGradient(0, targetHeight * 0.45, 0, CARD_HEIGHT);
+          fade.addColorStop(0, 'rgba(17, 17, 32, 0)');
+          fade.addColorStop(1, 'rgba(17, 17, 32, 0.92)');
+          ctx.fillStyle = fade;
+          ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+        }
+      }
+      const panelRect = { x: 48, y: 88, width: CARD_WIDTH - 96, height: CARD_HEIGHT - 136 };
+      const accentStroke = withAlpha(paletteOverrides.accent, 0.32);
+
+      if (config.frameStyle === 'cut') {
+        drawCutRect(ctx, panelRect.x, panelRect.y, panelRect.width, panelRect.height, 36, palette.panel, palette.border);
+        ctx.save();
+        ctx.lineWidth = 3.5;
+        ctx.strokeStyle = accentStroke;
+        ctx.shadowColor = withAlpha(paletteOverrides.accent, 0.2);
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
+        traceCutRectPath(ctx, panelRect.x - 10, panelRect.y - 10, panelRect.width + 20, panelRect.height + 20, 44);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      } else {
+        drawRoundedRect(
+          ctx,
+          panelRect.x,
+          panelRect.y,
+          panelRect.width,
+          panelRect.height,
+          32,
+          palette.panel,
+          palette.border,
+        );
+        ctx.save();
+        ctx.lineWidth = 2.5;
+        ctx.strokeStyle = accentStroke;
+        ctx.shadowColor = withAlpha(paletteOverrides.accent, 0.18);
+        ctx.shadowBlur = 16;
+        ctx.beginPath();
+        traceRoundedRectPath(
+          ctx,
+          panelRect.x - 12,
+          panelRect.y - 12,
+          panelRect.width + 24,
+          panelRect.height + 24,
+          40,
+        );
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
 
       const initialsSource = profile?.primaryIdentity?.username ?? displayName;
       let avatarSource: CanvasImageSource | null = null;
@@ -521,7 +813,25 @@ class MiddlemanCardGenerator {
         avatarSource = createAvatarFallback(resolveInitials(initialsSource));
       }
 
-      drawAvatar(ctx, avatarSource, 82, 132, AVATAR_SIZE);
+      const shouldOverrideBorder = Boolean(
+        accentOverride && config.avatarBorderColor === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarBorderColor,
+      );
+      const shouldOverrideGlow = Boolean(
+        accentOverride && config.avatarGlow === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarGlow,
+      );
+      const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
+      const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
+
+      drawAvatar(
+        ctx,
+        avatarSource,
+        82,
+        132,
+        AVATAR_SIZE,
+        config.avatarStyle,
+        avatarBorderColor,
+        avatarGlow,
+      );
 
       const infoX = 82 + AVATAR_SIZE + 48;
       const infoY = 152;
@@ -533,7 +843,7 @@ class MiddlemanCardGenerator {
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       ctx.font = '500 24px "Segoe UI", Arial';
       ctx.fillStyle = palette.textSecondary;
-      ctx.fillText(Roblox: , infoX, infoY + 50);
+      ctx.fillText(`Roblox: ${robloxUsername}`, infoX, infoY + 50);
 
       const ratingCount = profile?.ratingCount ?? 0;
       const ratingValue = ratingCount > 0 ? (profile?.ratingSum ?? 0) / ratingCount : 0;
@@ -542,11 +852,11 @@ class MiddlemanCardGenerator {
 
       ctx.font = '600 22px "Segoe UI", Arial';
       ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(${ratingValue.toFixed(2)} / 5 (), infoX, infoY + 150);
+      ctx.fillText(`${ratingValue.toFixed(2)} / 5 ⭐`, infoX, infoY + 150);
 
       const vouches = profile?.vouches ?? 0;
       drawBadge(ctx, infoX, infoY + 176, 'Vouches', formatNumber(vouches), paletteOverrides.accent);
-      drawBadge(ctx, infoX + 220, infoY + 176, 'Reseñas', ${ratingCount}, paletteOverrides.highlight);
+      drawBadge(ctx, infoX + 220, infoY + 176, 'Reseñas', `${ratingCount}`, paletteOverrides.highlight);
 
       const highlightText = options.highlight ?? config.highlight ?? null;
       if (highlightText) {
@@ -696,12 +1006,16 @@ class MiddlemanCardGenerator {
     profile: MiddlemanProfile | null;
     discordDisplayName?: string;
     discordAvatarUrl?: string | null;
+    discordBannerUrl?: string | null;
+    accentColor?: string | null;
     highlight?: string | null;
   }): Promise<AttachmentBuilder | null> {
     return this.renderProfileCard({
       discordTag: options.discordTag,
       discordDisplayName: options.discordDisplayName,
       discordAvatarUrl: options.discordAvatarUrl,
+      discordBannerUrl: options.discordBannerUrl,
+      accentColor: options.accentColor,
       profile: options.profile,
       highlight: options.highlight ?? null,
     });

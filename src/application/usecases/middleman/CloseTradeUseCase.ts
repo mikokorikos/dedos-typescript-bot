@@ -8,6 +8,7 @@ import type { Logger } from 'pino';
 
 import type { FinalizationParticipantPresentation } from '@/application/services/FinalizationPanelService';
 import { renderFinalizationPanel } from '@/application/services/FinalizationPanelService';
+import { reviewInviteStore } from '@/application/services/ReviewInviteStore';
 import type { IMemberStatsRepository } from '@/domain/repositories/IMemberStatsRepository';
 import type { IMiddlemanFinalizationRepository } from '@/domain/repositories/IMiddlemanFinalizationRepository';
 import type { IMiddlemanRepository } from '@/domain/repositories/IMiddlemanRepository';
@@ -16,6 +17,7 @@ import type { ITradeRepository } from '@/domain/repositories/ITradeRepository';
 import { TradeStatus } from '@/domain/value-objects/TradeStatus';
 import { FINALIZATION_CANCEL_BUTTON_ID } from '@/presentation/components/buttons/FinalizationCancelButton';
 import { FINALIZATION_CONFIRM_BUTTON_ID } from '@/presentation/components/buttons/FinalizationConfirmButton';
+import { buildReviewButtonRow } from '@/presentation/components/buttons/ReviewButtons';
 import type { EmbedFactory } from '@/presentation/embeds/EmbedFactory';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import {
@@ -128,21 +130,26 @@ export class CloseTradeUseCase {
       await this.finalizationRepo.reset(ticketId);
     }
 
-    await channel.send(
+    const reviewMessage = await channel.send(
       brandMessageOptions({
         embeds: [
           this.embeds.success({
             title: 'Ticket cerrado',
             description:
-              'La transacciÃ³n fue marcada como completada. Gracias por utilizar el sistema de middleman de Dedos.',
+              'La transacción fue marcada como completada. Gracias por utilizar el sistema de middleman de Dedos.',
           }),
           this.embeds.reviewRequest({
             middlemanTag: `<@${middlemanId}>`,
-            tradeSummary: 'Por favor comparte tu experiencia respondiendo al formulario de reseÃ±a.',
+            tradeSummary: 'Por favor comparte tu experiencia respondiendo al formulario de reseña.',
           }),
+        ],
+        components: [
+          buildReviewButtonRow({ ticketId, middlemanId: middlemanId.toString() }),
         ],
       }),
     );
+
+    reviewInviteStore.set(reviewMessage.id, { ticketId, middlemanId: middlemanId.toString() });
 
     this.logger.info(
       { ticketId, middlemanId: middlemanId.toString(), channelId: channel.id },
