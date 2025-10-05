@@ -64,8 +64,12 @@ export class ClaimTradeUseCase {
     const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
     const vouches = profile?.vouches ?? 0;
 
+    const middlemanMention = '<@' + payload.middlemanId + '>';
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
-      discordTag: `<@${payload.middlemanId}>`,
+      discordTag: middlemanMention,
+      discordDisplayName: payload.middlemanDisplayName,
+      discordAvatarUrl: payload.middlemanAvatarUrl,
       profile,
       highlight: 'Disponible para asistencia',
     });
@@ -78,7 +82,6 @@ export class ClaimTradeUseCase {
       ManageChannels: false,
     });
 
-    const middlemanMention = `<@${payload.middlemanId}>`;
     const infoEmbed = this.embeds.info({
       title: '🛡️ Middleman asignado',
       description: [

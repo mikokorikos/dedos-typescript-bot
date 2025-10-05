@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { Transactional } from '@/domain/repositories/transaction';
+import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 
 export interface MiddlemanClaim {
   readonly ticketId: number;
@@ -31,6 +32,7 @@ export interface MiddlemanProfile {
   readonly vouches: number;
   readonly ratingSum: number;
   readonly ratingCount: number;
+  readonly cardConfig: MiddlemanCardConfig;
 }
 
 
@@ -46,12 +48,14 @@ export interface IMiddlemanRepository extends Transactional<IMiddlemanRepository
     robloxUsername: string;
     robloxUserId?: bigint | null;
     verified?: boolean;
+    cardConfig?: MiddlemanCardConfig;
   }): Promise<void>;
   updateProfile(data: {
     userId: bigint;
     robloxUsername?: string | null;
     robloxUserId?: bigint | null;
     verified?: boolean;
+    cardConfig?: MiddlemanCardConfig | null;
   }): Promise<void>;
   getProfile(userId: bigint): Promise<MiddlemanProfile | null>;
   listTopProfiles(limit?: number): Promise<readonly MiddlemanProfile[]>;

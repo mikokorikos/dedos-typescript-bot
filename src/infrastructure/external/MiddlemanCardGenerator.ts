@@ -9,12 +9,20 @@ import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { AttachmentBuilder } from 'discord.js';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
+import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
+import { DEFAULT_MIDDLEMAN_CARD_CONFIG } from '@/domain/value-objects/MiddlemanCardConfig';
 import { logger } from '@/shared/logger/pino';
 
 const CARD_WIDTH = 1280;
 const CARD_HEIGHT = 460;
 const AVATAR_SIZE = 180;
 const CACHE_TTL_MS = 5 * 60_000;
+
+const LAYOUT_SCALE: Record<MiddlemanCardConfig['layout'], number> = {
+  compact: 0.88,
+  standard: 1,
+  expanded: 1.15,
+};
 
 const palette = {
   backgroundStart: '#161129',
@@ -33,6 +41,8 @@ const palette = {
 
 interface ProfileCardOptions {
   readonly discordTag: string;
+  readonly discordDisplayName?: string | null;
+  readonly discordAvatarUrl?: string | null;
   readonly profile: MiddlemanProfile | null;
   readonly highlight?: string | null;
 }
@@ -78,24 +88,30 @@ const createCacheKey = (type: string, payload: unknown): string => {
   return createHash('sha1').update(`${type}:${serialized}`).digest('hex');
 };
 
-const drawBackground = (ctx: SKRSContext2D): void => {
+const drawBackground = (
+  ctx: SKRSContext2D,
+  paletteOverrides: typeof palette = palette,
+  pattern: MiddlemanCardConfig['pattern'] = 'grid',
+): void => {
   const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
-  gradient.addColorStop(0, palette.backgroundStart);
-  gradient.addColorStop(1, palette.backgroundEnd);
+  gradient.addColorStop(0, paletteOverrides.backgroundStart);
+  gradient.addColorStop(1, paletteOverrides.backgroundEnd);
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
 
-  const accent = ctx.createLinearGradient(0, 0, CARD_WIDTH, 160);
-  accent.addColorStop(0, 'rgba(124, 92, 255, 0.55)');
-  accent.addColorStop(1, 'rgba(35, 31, 63, 0)');
-  ctx.fillStyle = accent;
+  const accentGradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, 160);
+  accentGradient.addColorStop(0, withAlpha(paletteOverrides.accent, 0.55));
+  accentGradient.addColorStop(1, withAlpha(paletteOverrides.accent, 0));
+  ctx.fillStyle = accentGradient;
   ctx.fillRect(0, 0, CARD_WIDTH, 180);
 
   const radial = ctx.createRadialGradient(CARD_WIDTH - 260, 160, 32, CARD_WIDTH - 200, 180, 420);
-  radial.addColorStop(0, 'rgba(18, 217, 187, 0.35)');
-  radial.addColorStop(1, 'rgba(18, 217, 187, 0)');
+  radial.addColorStop(0, paletteOverrides.highlightSoft);
+  radial.addColorStop(1, withAlpha(paletteOverrides.highlightSoft, 0));
   ctx.fillStyle = radial;
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
+
+  drawPattern(ctx, pattern, paletteOverrides.accent, CARD_WIDTH, CARD_HEIGHT);
 };
 
 const drawRoundedRect = (
@@ -142,6 +158,177 @@ const drawAvatar = (ctx: SKRSContext2D, source: CanvasImageSource, x: number, y:
   ctx.shadowBlur = 0;
   ctx.drawImage(source, x, y, size, size);
   ctx.restore();
+};
+
+const withAlpha = (color: string, alpha: number): string => {
+  if (color.startsWith('rgba')) {
+    return color.replace(/rgba\(([^,]+),([^,]+),([^,]+),[^)]+\)/u, (_, r, g, b) => `rgba(${r.trim()}, ${g.trim()}, ${b.trim()}, ${alpha.toFixed(2)})`);
+  }
+
+  if (color.startsWith('#') && color.length === 7) {
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha.toFixed(2)})`;
+  }
+
+  return color;
+};
+
+const drawPattern = (
+  ctx: SKRSContext2D,
+  pattern: MiddlemanCardConfig['pattern'],
+  accentColor: string,
+  width: number,
+  height: number,
+): void => {
+  if (pattern === 'none') {
+    return;
+  }
+
+  const stroke = withAlpha(accentColor, 0.08);
+  ctx.save();
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = 1.2;
+  ctx.globalCompositeOperation = 'lighter';
+
+  switch (pattern) {
+    case 'grid': {
+      const step = 64;
+      for (let x = 0; x <= width; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, height);
+        ctx.stroke();
+      }
+      for (let y = 0; y <= height; y += step) {
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(width, y);
+        ctx.stroke();
+      }
+      break;
+    }
+    case 'waves': {
+      const amplitude = 12;
+      const wavelength = 140;
+      ctx.beginPath();
+      for (let x = -wavelength; x <= width + wavelength; x += 6) {
+        const y = height * 0.2 + Math.sin(x / wavelength * Math.PI * 2) * amplitude;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.beginPath();
+      for (let x = -wavelength; x <= width + wavelength; x += 6) {
+        const y = height * 0.65 + Math.cos(x / wavelength * Math.PI * 2) * amplitude;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      break;
+    }
+    case 'circuit': {
+      const step = 110;
+      for (let x = 0; x <= width; x += step) {
+        for (let y = 0; y <= height; y += step) {
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + step / 2, y + step / 4);
+          ctx.lineTo(x + step / 2, y + (step * 3) / 4);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(x + step / 2, y + step / 2, 6, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+      }
+      break;
+    }
+    case 'mesh': {
+      const step = 80;
+      for (let x = -height; x <= width; x += step) {
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x + height, height);
+        ctx.stroke();
+      }
+      break;
+    }
+    default:
+      break;
+  }
+
+  ctx.restore();
+};
+
+const drawStar = (
+  ctx: SKRSContext2D,
+  x: number,
+  y: number,
+  outerRadius: number,
+  color: string,
+  style: 'sharp' | 'rounded',
+  fillRatio: number,
+): void => {
+  const spikes = 5;
+  const innerRadius = style === 'rounded' ? outerRadius * 0.6 : outerRadius * 0.52;
+  const step = Math.PI / spikes;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.translate(x, y);
+  ctx.rotate(-Math.PI / 2);
+  ctx.moveTo(0, -outerRadius);
+  for (let i = 0; i < spikes; i += 1) {
+    ctx.lineTo(Math.cos(i * 2 * step) * outerRadius, Math.sin(i * 2 * step) * outerRadius);
+    ctx.lineTo(Math.cos((i * 2 + 1) * step) * innerRadius, Math.sin((i * 2 + 1) * step) * innerRadius);
+  }
+  ctx.closePath();
+
+  ctx.fillStyle = withAlpha(color, 0.18);
+  ctx.fill();
+  ctx.clip();
+
+  if (fillRatio > 0) {
+    ctx.fillStyle = color;
+    ctx.fillRect(-outerRadius, -outerRadius, outerRadius * 2 * Math.min(1, fillRatio), outerRadius * 2);
+  }
+
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(-Math.PI / 2);
+  ctx.beginPath();
+  ctx.moveTo(0, -outerRadius);
+  for (let i = 0; i < spikes; i += 1) {
+    ctx.lineTo(Math.cos(i * 2 * step) * outerRadius, Math.sin(i * 2 * step) * outerRadius);
+    ctx.lineTo(Math.cos((i * 2 + 1) * step) * innerRadius, Math.sin((i * 2 + 1) * step) * innerRadius);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = withAlpha(color, 0.45);
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.restore();
+};
+
+const drawRatingStars = (
+  ctx: SKRSContext2D,
+  rating: number,
+  x: number,
+  y: number,
+  spacing: number,
+  color: string,
+  style: 'sharp' | 'rounded',
+): void => {
+  const clamped = Math.max(0, Math.min(5, rating));
+  const full = Math.floor(clamped);
+  const fraction = clamped - full;
+  const radius = 18;
+
+  for (let index = 0; index < 5; index += 1) {
+    const offset = x + index * spacing;
+    const fillRatio = index < full ? 1 : index === full ? fraction : 0;
+    drawStar(ctx, offset, y, radius, color, style, fillRatio);
+  }
 };
 
 const drawBadge = (
@@ -262,11 +449,6 @@ const loadRobloxAvatar = async (robloxUserId: bigint): Promise<CanvasImageSource
   }
 };
 
-const renderStars = (rating: number): string => {
-  const clamped = Math.max(0, Math.min(5, Math.round(rating)));
-  const filled = '★'.repeat(clamped);
-  const empty = '☆'.repeat(5 - clamped);
-  return `${filled}${empty}`;
 };
 
 const formatNumber = (value: number): string =>
@@ -276,14 +458,24 @@ class MiddlemanCardGenerator {
   private readonly cache = new Map<string, CacheEntry>();
 
   public async renderProfileCard(options: ProfileCardOptions): Promise<AttachmentBuilder | null> {
+    const profile = options.profile;
+    const config = profile?.cardConfig ?? DEFAULT_MIDDLEMAN_CARD_CONFIG;
+    const baseName = (options.discordDisplayName ?? options.discordTag).trim();
+    const mentionMatch = baseName.match(/^<@!?(\d+)>$/u);
+    const displayLabel = mentionMatch ? "Usuario " + mentionMatch[1] : baseName;
+    const displayName = displayLabel.slice(0, 32);
+
     const cacheKey = createCacheKey('profile', {
       tag: options.discordTag,
-      username: options.profile?.primaryIdentity?.username ?? null,
-      robloxId: options.profile?.primaryIdentity?.robloxUserId?.toString() ?? null,
-      vouches: options.profile?.vouches ?? 0,
-      ratingSum: options.profile?.ratingSum ?? 0,
-      ratingCount: options.profile?.ratingCount ?? 0,
-      highlight: options.highlight ?? null,
+      displayName,
+      avatar: options.discordAvatarUrl ?? null,
+      username: profile?.primaryIdentity?.username ?? null,
+      robloxId: profile?.primaryIdentity?.robloxUserId?.toString() ?? null,
+      vouches: profile?.vouches ?? 0,
+      ratingSum: profile?.ratingSum ?? 0,
+      ratingCount: profile?.ratingCount ?? 0,
+      highlight: options.highlight ?? config.highlight ?? null,
+      cardConfig: config,
     });
 
     const cached = this.getFromCache(cacheKey, 'middleman-profile-card.png');
@@ -292,55 +484,87 @@ class MiddlemanCardGenerator {
     }
 
     try {
-      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+      const scale = LAYOUT_SCALE[config.layout] ?? 1;
+      const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
       const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
 
-      drawBackground(ctx);
+      const paletteOverrides = {
+        ...palette,
+        backgroundStart: config.gradientStart,
+        backgroundEnd: config.gradientEnd,
+        highlight: config.accent,
+        highlightSoft: config.accentSoft,
+        accent: config.accent,
+      };
+
+      drawBackground(ctx, paletteOverrides, config.pattern);
       drawRoundedRect(ctx, 48, 88, CARD_WIDTH - 96, CARD_HEIGHT - 136, 32, palette.panel, palette.border);
 
-      const initials = resolveInitials(options.profile?.primaryIdentity?.username ?? options.discordTag);
-      const robloxId = options.profile?.primaryIdentity?.robloxUserId ?? null;
-      const avatarSource =
-        robloxId !== null && robloxId !== undefined
-          ? await loadRobloxAvatar(robloxId).catch(() => null)
-          : null;
-      drawAvatar(ctx, avatarSource ?? createAvatarFallback(initials), 82, 132, AVATAR_SIZE);
+      const initialsSource = profile?.primaryIdentity?.username ?? displayName;
+      let avatarSource: CanvasImageSource | null = null;
+      const robloxId = profile?.primaryIdentity?.robloxUserId ?? null;
+      if (robloxId !== null) {
+        avatarSource = await loadRobloxAvatar(robloxId).catch(() => null);
+      }
+
+      if (!avatarSource && options.discordAvatarUrl) {
+        try {
+          const buffer = await fetchAvatarBuffer(options.discordAvatarUrl);
+          avatarSource = await loadImage(buffer);
+        } catch (error) {
+          logger.warn({ err: error, avatarUrl: options.discordAvatarUrl }, 'No se pudo cargar avatar de Discord.');
+        }
+      }
+
+      if (!avatarSource) {
+        avatarSource = createAvatarFallback(resolveInitials(initialsSource));
+      }
+
+      drawAvatar(ctx, avatarSource, 82, 132, AVATAR_SIZE);
 
       const infoX = 82 + AVATAR_SIZE + 48;
       const infoY = 152;
 
-      ctx.font = '700 48px "Segoe UI", Arial';
+      ctx.font = '700 50px "Segoe UI", Arial';
       ctx.fillStyle = palette.textPrimary;
-      ctx.fillText(options.discordTag, infoX, infoY);
+      ctx.fillText(displayName, infoX, infoY);
 
-      const robloxUsername = options.profile?.primaryIdentity?.username ?? 'Sin registrar';
+      const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       ctx.font = '500 24px "Segoe UI", Arial';
       ctx.fillStyle = palette.textSecondary;
-      ctx.fillText(`Roblox: ${robloxUsername}`, infoX, infoY + 42);
+      ctx.fillText(Roblox: , infoX, infoY + 50);
 
-      const ratingCount = options.profile?.ratingCount ?? 0;
-      const ratingValue = ratingCount > 0 ? (options.profile?.ratingSum ?? 0) / ratingCount : 0;
-      const ratingStars = renderStars(ratingValue);
-      ctx.font = '600 28px "Segoe UI", Arial';
-      ctx.fillStyle = palette.accent;
-      ctx.fillText(`${ratingStars}  ${ratingValue.toFixed(2)} / 5 (${ratingCount})`, infoX, infoY + 90);
+      const ratingCount = profile?.ratingCount ?? 0;
+      const ratingValue = ratingCount > 0 ? (profile?.ratingSum ?? 0) / ratingCount : 0;
 
-      const vouches = options.profile?.vouches ?? 0;
-      drawBadge(ctx, infoX, infoY + 112, 'Vouches', formatNumber(vouches), palette.accent);
-      drawBadge(ctx, infoX + 240, infoY + 112, 'Resenas', `${ratingCount}`, palette.highlight);
+      drawRatingStars(ctx, ratingValue, infoX + 12, infoY + 102, 64, paletteOverrides.accent, config.starStyle);
 
-      drawMetricPill(
-        ctx,
-        CARD_WIDTH - 48 - 220,
-        infoY,
-        'Ultima actualizacion',
-        new Date().toISOString().split('T')[0] ?? '',
-      );
+      ctx.font = '600 22px "Segoe UI", Arial';
+      ctx.fillStyle = palette.textPrimary;
+      ctx.fillText(${ratingValue.toFixed(2)} / 5 (), infoX, infoY + 150);
 
-      if (options.highlight) {
+      const vouches = profile?.vouches ?? 0;
+      drawBadge(ctx, infoX, infoY + 176, 'Vouches', formatNumber(vouches), paletteOverrides.accent);
+      drawBadge(ctx, infoX + 220, infoY + 176, 'Reseñas', ${ratingCount}, paletteOverrides.highlight);
+
+      const highlightText = options.highlight ?? config.highlight ?? null;
+      if (highlightText) {
         ctx.font = '500 22px "Segoe UI", Arial';
         ctx.fillStyle = palette.textSecondary;
-        ctx.fillText(options.highlight, infoX, infoY + 196);
+        ctx.fillText(highlightText, infoX, infoY + 220);
+      }
+
+      if (config.customBadgeText) {
+        drawBadge(ctx, CARD_WIDTH - 300, infoY - 38, 'Rol', config.customBadgeText, paletteOverrides.accent);
+      }
+
+      if (config.watermark) {
+        ctx.font = '500 18px "Segoe UI", Arial';
+        ctx.fillStyle = palette.textMuted;
+        ctx.textAlign = 'right';
+        ctx.fillText(config.watermark, CARD_WIDTH - 72, CARD_HEIGHT - 52);
+        ctx.textAlign = 'left';
       }
 
       const buffer = canvas.toBuffer('image/png');
@@ -467,8 +691,20 @@ class MiddlemanCardGenerator {
     }
   }
 
-  public async render(options: { discordTag: string; profile: MiddlemanProfile | null }): Promise<AttachmentBuilder | null> {
-    return this.renderProfileCard({ discordTag: options.discordTag, profile: options.profile });
+  public async render(options: {
+    discordTag: string;
+    profile: MiddlemanProfile | null;
+    discordDisplayName?: string;
+    discordAvatarUrl?: string | null;
+    highlight?: string | null;
+  }): Promise<AttachmentBuilder | null> {
+    return this.renderProfileCard({
+      discordTag: options.discordTag,
+      discordDisplayName: options.discordDisplayName,
+      discordAvatarUrl: options.discordAvatarUrl,
+      profile: options.profile,
+      highlight: options.highlight ?? null,
+    });
   }
 
   private getFromCache(cacheKey: string, fileName: string): AttachmentBuilder | null {

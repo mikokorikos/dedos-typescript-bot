@@ -7,6 +7,12 @@ import { z } from 'zod';
 import { TicketType } from '@/domain/entities/types';
 import { SnowflakeSchema } from '@/shared/utils/validation';
 
+const DisplayNameSchema = z
+  .string()
+  .trim()
+  .min(2, 'Display name must have at least 2 characters.')
+  .max(32, 'Display name must not exceed 32 characters.');
+
 export const CreateGeneralTicketSchema = z.object({
   userId: SnowflakeSchema,
   guildId: SnowflakeSchema,

@@ -13,6 +13,7 @@ import type {
 } from 'discord.js';
 import { ChannelType, DiscordAPIError, MessageFlags, SlashCommandBuilder } from 'discord.js';
 import { RESTJSONErrorCodes } from 'discord-api-types/v10';
+import { ZodError } from 'zod';
 
 import { reviewInviteStore } from '@/application/services/ReviewInviteStore';
 import { ClaimTradeUseCase } from '@/application/usecases/middleman/ClaimTradeUseCase';
@@ -24,6 +25,7 @@ import { RequestTradeClosureUseCase } from '@/application/usecases/middleman/Req
 import { RevokeFinalizationUseCase } from '@/application/usecases/middleman/RevokeFinalizationUseCase';
 import { SubmitReviewUseCase } from '@/application/usecases/middleman/SubmitReviewUseCase';
 import { SubmitTradeDataUseCase } from '@/application/usecases/middleman/SubmitTradeDataUseCase';
+import { UpdateCardConfigUseCase } from '@/application/usecases/middleman/UpdateCardConfigUseCase';
 import { prisma } from '@/infrastructure/db/prisma';
 import { PrismaMemberStatsRepository } from '@/infrastructure/repositories/PrismaMemberStatsRepository';
 import { PrismaMiddlemanFinalizationRepository } from '@/infrastructure/repositories/PrismaMiddlemanFinalizationRepository';
@@ -41,6 +43,7 @@ import {
 import {
   buildReviewButtonRow,
   REVIEW_BUTTON_CUSTOM_ID,
+  parseReviewButtonCustomId,
 } from '@/presentation/components/buttons/ReviewButtons';
 import {
   TRADE_CONFIRM_BUTTON_ID,
@@ -108,6 +111,8 @@ const submitReviewUseCase = new SubmitReviewUseCase(
   embedFactory,
   logger,
 );
+
+const updateCardConfigUseCase = new UpdateCardConfigUseCase(middlemanRepo, logger);
 
 const submitTradeDataUseCase = new SubmitTradeDataUseCase(ticketRepo, tradeRepo, logger);
 
@@ -344,9 +349,24 @@ registerFinalizationConfirmButton(confirmFinalizationUseCase, ticketRepo);
 registerFinalizationCancelButton(revokeFinalizationUseCase, ticketRepo);
 
 registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
-  const invite = reviewInviteStore.get(interaction.message.id);
+  const cachedInvite = reviewInviteStore.get(interaction.message.id);
+  const buttonMetadata = parseReviewButtonCustomId(interaction.customId);
 
-  if (!invite) {
+  let ticketId = cachedInvite?.ticketId ?? buttonMetadata?.ticketId ?? null;
+  let middlemanId = cachedInvite?.middlemanId ?? buttonMetadata?.middlemanId ?? null;
+
+  if ((!ticketId || !middlemanId) && interaction.channelId) {
+    const ticket = await ticketRepo.findByChannelId(BigInt(interaction.channelId));
+    if (ticket) {
+      ticketId = ticket.id;
+      const claim = await middlemanRepo.getClaimByTicket(ticket.id);
+      if (claim) {
+        middlemanId = claim.middlemanId.toString();
+      }
+    }
+  }
+
+  if (!ticketId || !middlemanId) {
     await interaction.reply(
       brandReplyOptions({
         embeds: [
@@ -354,7 +374,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
             title: 'Formulario no disponible',
 
             description:
-              'Esta invitacion de resena ha expirado. Solicita al staff que envie una nueva.',
+              'No pudimos validar este formulario de reseña. Solicita al staff que envíe una nueva invitación.',
           }),
         ],
 
@@ -365,8 +385,13 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
     return;
   }
 
+  reviewInviteStore.set(interaction.message.id, {
+    ticketId,
+    middlemanId,
+  });
+
   const isParticipant = await ticketRepo.isParticipant(
-    invite.ticketId,
+    ticketId,
     BigInt(interaction.user.id),
   );
 
@@ -375,9 +400,9 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
       brandReplyOptions({
         embeds: [
           embedFactory.error({
-            title: 'No puedes resenar este ticket',
+            title: 'No puedes reseñar este ticket',
 
-            description: 'Solo los participantes del ticket pueden enviar una resena.',
+            description: 'Solo los participantes del ticket pueden enviar una reseña.',
           }),
         ],
 
@@ -388,7 +413,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
     return;
   }
 
-  const modalCustomId = `review:${invite.ticketId}:${invite.middlemanId}:${interaction.user.id}`;
+  const modalCustomId = `review:${ticketId}:${middlemanId}:${interaction.user.id}`;
 
   if (modalHandlers.has(modalCustomId)) {
     modalHandlers.delete(modalCustomId);
@@ -405,10 +430,10 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           brandEditReplyOptions({
             embeds: [
               embedFactory.error({
-                title: 'Configuracion incompleta',
+                title: 'Configuración incompleta',
 
                 description:
-                  'No se pudo encontrar el canal de resenas. Un administrador debe establecer `REVIEW_CHANNEL_ID` en el .env.',
+                  'No se pudo encontrar el canal de reseñas. Un administrador debe establecer `REVIEW_CHANNEL_ID` en el .env.',
               }),
             ],
           }),
@@ -424,9 +449,9 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           brandEditReplyOptions({
             embeds: [
               embedFactory.error({
-                title: 'Canal invalido',
+                title: 'Canal inválido',
 
-                description: 'El canal de resenas configurado no es un canal de texto valido.',
+                description: 'El canal de reseñas configurado no es un canal de texto válido.',
               }),
             ],
           }),
@@ -435,17 +460,27 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
         return;
       }
 
+      const middlemanUser = await modalInteraction.client.users
+        .fetch(middlemanId)
+        .catch(() => null);
+      const middlemanDisplayName = (
+        middlemanUser?.globalName ?? middlemanUser?.username ?? undefined
+      );
+      const middlemanAvatarUrl = middlemanUser?.displayAvatarURL({ extension: 'png', size: 256 }) ?? undefined;
+
       await submitReviewUseCase.execute(
         {
-          ticketId: invite.ticketId,
+          ticketId,
 
           reviewerId: modalInteraction.user.id,
 
-          middlemanId: invite.middlemanId,
+          middlemanId,
 
           rating,
 
           comment: comment ?? undefined,
+          middlemanDisplayName,
+          middlemanAvatarUrl,
         },
 
         channel,
@@ -455,9 +490,9 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
         brandEditReplyOptions({
           embeds: [
             embedFactory.success({
-              title: 'Gracias por tu resena!',
+              title: '¡Gracias por tu reseña!',
 
-              description: 'Tu valoracion se ha publicado correctamente en el canal de resenas.',
+              description: 'Tu valoración se ha publicado correctamente en el canal de reseñas.',
             }),
           ],
         }),
@@ -468,12 +503,12 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
       if (shouldLogStack) {
         logger.error(
           { err: error, referenceId },
-          'Error inesperado al registrar resena de middleman.',
+          'Error inesperado al registrar reseña de middleman.',
         );
       } else {
         logger.warn(
           { err: error, referenceId },
-          'Error controlado al registrar resena de middleman.',
+          'Error controlado al registrar reseña de middleman.',
         );
       }
 
@@ -486,10 +521,10 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
 
             embeds: embeds ?? [
               embedFactory.error({
-                title: 'No se pudo registrar la resena',
+                title: 'No se pudo registrar la reseña',
 
                 description:
-                  'Ocurrio un error al procesar tu resena. Intentalo nuevamente en unos minutos.',
+                  'Ocurrió un error al procesar tu reseña. Inténtalo nuevamente en unos minutos.',
               }),
             ],
           }),
@@ -504,10 +539,10 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
 
           embeds: embeds ?? [
             embedFactory.error({
-              title: 'No se pudo registrar la resena',
+              title: 'No se pudo registrar la reseña',
 
               description:
-                'Ocurrio un error al procesar tu resena. Intentalo nuevamente en unos minutos.',
+                'Ocurrió un error al procesar tu reseña. Inténtalo nuevamente en unos minutos.',
             }),
           ],
 
@@ -898,8 +933,19 @@ registerButtonHandler(MIDDLEMAN_CLAIM_BUTTON_ID, async (interaction) => {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+    const memberDisplayName =
+      typeof (interaction.member as { displayName?: string })?.displayName === 'string'
+        ? (interaction.member as { displayName: string }).displayName
+        : interaction.user.globalName ?? interaction.user.username;
+    const memberAvatarUrl = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
+
     await claimUseCase.execute(
-      { ticketId: ticket.id, middlemanId: interaction.user.id },
+      {
+        ticketId: ticket.id,
+        middlemanId: interaction.user.id,
+        middlemanDisplayName: memberDisplayName,
+        middlemanAvatarUrl: memberAvatarUrl,
+      },
       textChannel,
     );
 
@@ -948,7 +994,8 @@ registerButtonHandler(MIDDLEMAN_CLAIM_BUTTON_ID, async (interaction) => {
             embedFactory.error({
               title: 'No se pudo reclamar el ticket',
 
-              description: 'Intentalo de nuevo o contacta a un administrador.',
+              description:
+                'Ocurrio un error al procesar tu solicitud. Intentalo nuevamente en unos minutos.',
             }),
           ],
         }),
@@ -965,819 +1012,13 @@ registerButtonHandler(MIDDLEMAN_CLAIM_BUTTON_ID, async (interaction) => {
           embedFactory.error({
             title: 'No se pudo reclamar el ticket',
 
-            description: 'Intentalo de nuevo o contacta a un administrador.',
-          }),
-        ],
-
-        flags: MessageFlags.Ephemeral,
-      }),
-    );
-  }
-});
-
-registerSelectMenuHandler(MIDDLEMAN_PANEL_MENU_ID, async (interaction) => {
-  if (!interaction.guild) {
-    await interaction.reply(
-      brandReplyOptions({
-        embeds: [
-          embedFactory.error({
-            title: 'Accion no disponible',
-
-            description: 'Este meno solo puede utilizarse dentro de un servidor.',
-          }),
-        ],
-
-        flags: MessageFlags.Ephemeral,
-      }),
-    );
-
-    return;
-  }
-
-  const value = interaction.values.at(0);
-
-  if (value === 'info') {
-    await interaction.reply(
-      brandReplyOptions({
-        embeds: [buildMiddlemanInfoEmbed()],
-
-        flags: MessageFlags.Ephemeral,
-      }),
-    );
-
-    return;
-  }
-
-  if (value === 'open') {
-    await interaction.showModal(MiddlemanModal.build());
-
-    return;
-  }
-
-  await interaction.reply(
-    brandReplyOptions({
-      embeds: [
-        embedFactory.warning({
-          title: 'Opcion no reconocida',
-
-          description: 'Selecciona una opcion vlida del meno para continuar.',
-        }),
-      ],
-
-      flags: MessageFlags.Ephemeral,
-    }),
-  );
-});
-
-const ensureTextChannel = (interaction: ChatInputCommandInteraction): TextChannel => {
-  if (!interaction.guild) {
-    throw new UnauthorizedActionError('middleman:command:guild-only');
-  }
-
-  const channel = interaction.channel;
-
-  if (!channel || channel.type !== ChannelType.GuildText) {
-    throw new UnauthorizedActionError('middleman:command:channel');
-  }
-
-  return channel;
-};
-
-const handleOpen = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  if (!interaction.guild) {
-    await interaction.reply(
-      brandReplyOptions({
-        embeds: [
-          embedFactory.error({
-            title: 'Accion no disponible',
-
-            description: 'Este comando solo puede utilizarse dentro de un servidor.',
-          }),
-        ],
-
-        flags: MessageFlags.Ephemeral,
-      }),
-    );
-
-    return;
-  }
-
-  await interaction.showModal(MiddlemanModal.build());
-};
-
-const handlePanel = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  const panel = buildMiddlemanPanelMessage();
-
-  await interaction.reply(
-    brandReplyOptions({
-      ...(panel as InteractionReplyOptions),
-
-      allowedMentions: { parse: [] },
-    }),
-  );
-};
-
-const handleClaim = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  const channel = ensureTextChannel(interaction);
-
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    throw new TicketNotFoundError(channel.id);
-  }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  await claimUseCase.execute({ ticketId: ticket.id, middlemanId: interaction.user.id }, channel);
-
-  await interaction.editReply(
-    brandEditReplyOptions({
-      embeds: [
-        embedFactory.success({
-          title: 'Ticket reclamado',
-
-          description:
-            'Ahora tienes control del ticket. Continoa con el flujo de validacion en el canal.',
-        }),
-      ],
-    }),
-  );
-};
-
-const handleClose = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  const channel = ensureTextChannel(interaction);
-
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    throw new TicketNotFoundError(channel.id);
-  }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  await closeUseCase.execute(ticket.id, BigInt(interaction.user.id), channel);
-
-  const participants = await ticketRepo.listParticipants(ticket.id);
-
-  const reviewerIds = new Set(
-    participants
-
-      .map((participant) => participant.userId.toString())
-
-      .filter((participantId) => participantId !== interaction.user.id),
-  );
-
-  const reviewerMentions = Array.from(reviewerIds).map((participantId) => `<@${participantId}>`);
-  const summaryIntro = reviewerMentions.length > 0
-    ? `${reviewerMentions.join(' ')}\nEl middleman ha marcado el ticket como completado. Comparte tu experiencia con una resena.`
-    : 'El middleman ha marcado el ticket como completado. Comparte tu experiencia con una resena.';
-
-  const reviewEmbed = embedFactory.reviewRequest({
-    middlemanTag: `<@${interaction.user.id}>`,
-    tradeSummary: 'Haz clic en el boton para calificar al middleman que gestiono tu transaccion.',
-  });
-
-  reviewEmbed.setDescription(
-    [summaryIntro, reviewEmbed.data.description ?? '']
-      .filter((segment) => segment.length > 0)
-      .join('\n\n'),
-  );
-
-  const inviteMessage = await channel.send(
-    brandMessageOptions({
-      embeds: [reviewEmbed],
-      components: [buildReviewButtonRow()],
-      allowedMentions: reviewerMentions.length > 0 ? { users: Array.from(reviewerIds) } : { parse: [] },
-    }),
-  );
-  reviewInviteStore.set(inviteMessage.id, {
-    ticketId: ticket.id,
-    middlemanId: interaction.user.id,
-  });
-
-  await interaction.editReply(
-    brandEditReplyOptions({
-      embeds: [
-        embedFactory.success({
-          title: 'Ticket cerrado',
-
-          description:
-            'El ticket se ha cerrado correctamente. Se solicito a los participantes que envien una resena del middleman.',
-        }),
-      ],
-    }),
-  );
-};
-
-const handleCloseRequest = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  const channel = ensureTextChannel(interaction);
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    throw new TicketNotFoundError(channel.id);
-  }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-  try {
-    const result = await requestClosureUseCase.execute(
-      ticket.id,
-      BigInt(interaction.user.id),
-      channel,
-    );
-
-    const message = result.completed
-      ? 'Todos los traders ya confirmaron el cierre. Puedes proceder a finalizar el ticket.'
-      : result.alreadyPending
-        ? 'Se actualizo el panel de confirmacion para que los traders registren su cierre.'
-        : 'Se publico el panel de confirmacion para que los traders registren su cierre.';
-
-    await interaction.editReply(
-      brandEditReplyOptions({
-        embeds: [
-          embedFactory.success({
-            title: 'Solicitud de cierre enviada',
-            description: message,
-          }),
-        ],
-      }),
-    );
-  } catch (error) {
-    const { shouldLogStack, referenceId, embeds, ...payload } = mapErrorToDiscordResponse(error);
-    const logContext = {
-      err: error,
-      referenceId,
-      ticketId: ticket.id,
-      channelId: channel.id,
-      userId: interaction.user.id,
-      source: 'slash:middleman:close-request',
-    };
-
-    if (shouldLogStack) {
-      logger.error(logContext, 'Error al solicitar cierre de trade.');
-    } else {
-      logger.warn(logContext, 'Error controlado al solicitar cierre de trade.');
-    }
-
-    const { flags, ...rest } = payload;
-    await interaction.editReply(
-      brandEditReplyOptions({
-        ...rest,
-        embeds,
-      }),
-    );
-  }
-};
-
-
-const handlePrefixOpenCommand = async (message: Message, args: ReadonlyArray<string>): Promise<void> => {
-  if (!(await ensureMessageInGuild(message))) {
-    return;
-  }
-
-  if (!env.MIDDLEMAN_CATEGORY_ID) {
-    await message.reply({
-      embeds: [
-        embedFactory.error({
-          title: 'Configuracion incompleta',
-          description:
-            'Define `MIDDLEMAN_CATEGORY_ID` en el archivo .env para abrir tickets de middleman desde texto.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  if (args.length < 2) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Uso del comando',
-          description:
-            'Sintaxis: `;middleman open @usuario descripcion del trade` (minimo 10 caracteres).',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  const [rawPartnerTag, ...contextParts] = args;
-  const partnerTag = rawPartnerTag?.trim();
-
-  if (!partnerTag || !MENTION_PATTERN.test(partnerTag)) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Companero invalido',
-          description: 'Menciona al companero (`@usuario`) o escribe su ID numerico de Discord.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  const context = contextParts.join(' ').trim();
-
-  if (context.length < 10) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Descripcion muy corta',
-          description: 'Describe el intercambio con al menos 10 caracteres.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  try {
-    const { ticket, channel } = await openUseCase.execute(
-      {
-        userId: message.author.id,
-        guildId: message.guild!.id,
-        type: 'MM',
-        context,
-        partnerTag,
-        categoryId: env.MIDDLEMAN_CATEGORY_ID,
-      },
-      message.guild!,
-    );
-
-    await tradePanelRenderer.render(channel, ticket.id);
-
-    await message.reply({
-      embeds: [
-        embedFactory.success({
-          title: 'Ticket creado',
-          description: `Tu ticket #${ticket.id} se creo en ${channel.toString()}.`,
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-  } catch (error) {
-    const { shouldLogStack, referenceId, embeds } = mapErrorToDiscordResponse(error);
-    const logPayload = {
-      err: error,
-      referenceId,
-      userId: message.author.id,
-      guildId: message.guild!.id,
-      channelId: message.channel.id,
-      source: 'prefix:middleman:open',
-    };
-
-    if (shouldLogStack) {
-      logger.error(logPayload, 'Error al crear ticket de middleman con prefijo.');
-    } else {
-      logger.warn(logPayload, 'Error controlado al crear ticket de middleman con prefijo.');
-    }
-
-    await message.reply({
-      embeds:
-        embeds ?? [
-          embedFactory.error({
-            title: 'No se pudo crear el ticket',
-            description: 'Hubo un problema durante la creacion del ticket. Revisa los datos e intenta de nuevo.',
-          }),
-        ],
-      allowedMentions: { repliedUser: false },
-    });
-  }
-};
-
-const handlePrefixClaimCommand = async (message: Message): Promise<void> => {
-  if (!(await ensureMessageInGuild(message))) {
-    return;
-  }
-
-  const channel = await ensureTextChannelFromMessage(
-    message,
-    'Para reclamar un ticket ejecuta el comando dentro del canal middleman.',
-  );
-
-  if (!channel) {
-    return;
-  }
-
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Ticket no encontrado',
-          description: 'No existe un ticket de middleman asociado a este canal.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  try {
-    await claimUseCase.execute({ ticketId: ticket.id, middlemanId: message.author.id }, channel);
-
-    await message.reply({
-      embeds: [
-        embedFactory.success({
-          title: 'Ticket reclamado',
-          description: 'Ahora tienes control del ticket. Continua con el flujo dentro de este canal.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-  } catch (error) {
-    const { shouldLogStack, referenceId, embeds } = mapErrorToDiscordResponse(error);
-    const logPayload = {
-      err: error,
-      referenceId,
-      ticketId: ticket.id,
-      channelId: channel.id,
-      userId: message.author.id,
-      source: 'prefix:middleman:claim',
-    };
-
-    if (shouldLogStack) {
-      logger.error(logPayload, 'Error al reclamar ticket de middleman con prefijo.');
-    } else {
-      logger.warn(logPayload, 'Error controlado al reclamar ticket de middleman con prefijo.');
-    }
-
-    await message.reply({
-      embeds:
-        embeds ?? [
-          embedFactory.error({
-            title: 'No se pudo reclamar el ticket',
-            description: 'Hubo un problema durante el proceso de reclamo.',
-          }),
-        ],
-      allowedMentions: { repliedUser: false },
-    });
-  }
-};
-
-const handlePrefixCloseCommand = async (message: Message): Promise<void> => {
-  if (!(await ensureMessageInGuild(message))) {
-    return;
-  }
-
-  const channel = await ensureTextChannelFromMessage(
-    message,
-    'Para cerrar un ticket ejecuta el comando dentro del canal middleman.',
-  );
-
-  if (!channel) {
-    return;
-  }
-
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Ticket no encontrado',
-          description: 'No existe un ticket de middleman asociado a este canal.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  try {
-    await closeUseCase.execute(ticket.id, BigInt(message.author.id), channel);
-
-    const participants = await ticketRepo.listParticipants(ticket.id);
-    const reviewerIds = new Set(
-      participants
-        .map((participant) => participant.userId.toString())
-        .filter((participantId) => participantId !== message.author.id),
-    );
-
-    const reviewerMentions = Array.from(reviewerIds).map((participantId) => `<@${participantId}>`);
-    const summaryIntro = reviewerMentions.length > 0
-      ? `${reviewerMentions.join(' ')}\nEl middleman ha marcado el ticket como completado. Comparte tu experiencia con una resena.`
-      : 'El middleman ha marcado el ticket como completado. Comparte tu experiencia con una resena.';
-
-    const reviewEmbed = embedFactory.reviewRequest({
-      middlemanTag: `<@${message.author.id}>`,
-      tradeSummary: 'Haz clic en el boton para calificar al middleman que gestiono tu transaccion.',
-    });
-
-    reviewEmbed.setDescription(
-      [summaryIntro, reviewEmbed.data.description ?? '']
-        .filter((segment) => segment.length > 0)
-        .join('\n\n'),
-    );
-
-    const inviteMessage = await channel.send(
-      brandMessageOptions({
-        embeds: [reviewEmbed],
-        components: [buildReviewButtonRow()],
-        allowedMentions: reviewerMentions.length > 0 ? { users: Array.from(reviewerIds) } : { parse: [] },
-      }),
-    );
-    reviewInviteStore.set(inviteMessage.id, {
-      ticketId: ticket.id,
-      middlemanId: message.author.id,
-    });
-
-    await message.reply({
-      embeds: [
-        embedFactory.success({
-          title: 'Ticket cerrado',
-          description: 'El ticket se cerro y se pidio a los participantes que envien una resena.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-  } catch (error) {
-    const { shouldLogStack, referenceId, embeds } = mapErrorToDiscordResponse(error);
-    const logPayload = {
-      err: error,
-      referenceId,
-      ticketId: ticket.id,
-      channelId: channel.id,
-      userId: message.author.id,
-      source: 'prefix:middleman:close',
-    };
-
-    if (shouldLogStack) {
-      logger.error(logPayload, 'Error al cerrar ticket de middleman con prefijo.');
-    } else {
-      logger.warn(logPayload, 'Error controlado al cerrar ticket de middleman con prefijo.');
-    }
-
-    await message.reply({
-      embeds:
-        embeds ?? [
-          embedFactory.error({
-            title: 'No se pudo cerrar el ticket',
-            description: 'Hubo un problema al cerrar el ticket. Intenta nuevamente en unos minutos.',
-          }),
-        ],
-      allowedMentions: { repliedUser: false },
-    });
-  }
-};
-
-const handlePrefixCloseRequestCommand = async (message: Message): Promise<void> => {
-  if (!(await ensureMessageInGuild(message))) {
-    return;
-  }
-
-  const channel = await ensureTextChannelFromMessage(
-    message,
-    'Para solicitar el cierre ejecuta el comando dentro del canal middleman.',
-  );
-
-  if (!channel) {
-    return;
-  }
-
-  const ticket = await ticketRepo.findByChannelId(BigInt(channel.id));
-
-  if (!ticket) {
-    await message.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Ticket no encontrado',
-          description: 'No existe un ticket de middleman asociado a este canal.',
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-
-    return;
-  }
-
-  try {
-    const result = await requestClosureUseCase.execute(
-      ticket.id,
-      BigInt(message.author.id),
-      channel,
-    );
-
-    const messageText = result.completed
-      ? 'Todos los traders ya confirmaron el cierre. Puedes proceder a finalizar el ticket.'
-      : result.alreadyPending
-        ? 'Se actualizo el panel de confirmacion para que los traders registren su cierre.'
-        : 'Se publico el panel de confirmacion para que los traders registren su cierre.';
-
-    await message.reply({
-      embeds: [
-        embedFactory.success({
-          title: 'Solicitud de cierre enviada',
-          description: messageText,
-        }),
-      ],
-      allowedMentions: { repliedUser: false },
-    });
-  } catch (error) {
-    const { shouldLogStack, referenceId, embeds } = mapErrorToDiscordResponse(error);
-    const logPayload = {
-      err: error,
-      referenceId,
-      ticketId: ticket.id,
-      channelId: channel.id,
-      userId: message.author.id,
-      source: 'prefix:middleman:close-request',
-    };
-
-    if (shouldLogStack) {
-      logger.error(logPayload, 'Error al solicitar cierre de trade con prefijo.');
-    } else {
-      logger.warn(logPayload, 'Error controlado al solicitar cierre de trade con prefijo.');
-    }
-
-    await message.reply({
-      embeds:
-        embeds ?? [
-          embedFactory.error({
-            title: 'No se pudo solicitar el cierre',
-            description: 'Hubo un problema durante la solicitud. Intenta nuevamente o contacta al staff.',
-          }),
-        ],
-      allowedMentions: { repliedUser: false },
-    });
-  }
-};
-
-
-
-export const middlemanCommand: Command = {
-  data: new SlashCommandBuilder()
-
-    .setName('middleman')
-
-    .setDescription('Sistema de middleman del servidor')
-
-    .addSubcommand((sub) => sub.setName('open').setDescription('Abrir ticket de middleman'))
-
-    .addSubcommand((sub) => sub.setName('claim').setDescription('Reclamar ticket (solo middlemen)'))
-
-    .addSubcommand((sub) =>
-      sub.setName('close').setDescription('Cerrar ticket (solo middleman asignado)'),
-    )
-    .addSubcommand((sub) =>
-      sub
-        .setName('close-request')
-        .setDescription('Solicitar confirmacion de cierre a los traders (solo middleman asignado)'),
-    )
-    .addSubcommand((sub) =>
-      sub.setName('panel').setDescription('Publicar el panel informativo de middleman'),
-    ),
-
-  category: 'Middleman',
-
-  examples: [
-    '/middleman open',
-    '/middleman claim',
-    '/middleman close',
-    '/middleman close-request',
-    '/middleman panel',
-    `${env.COMMAND_PREFIX}middleman open @usuario descripcion`,
-    `${env.COMMAND_PREFIX}middleman claim`,
-    `${env.COMMAND_PREFIX}middleman close`,
-    `${env.COMMAND_PREFIX}middleman close-request`,
-  ],
-
-  prefix: {
-    name: 'middleman',
-    async execute(message, args) {
-      const [rawSubcommand, ...rest] = args;
-      const subcommand = rawSubcommand?.toLowerCase();
-
-      if (!subcommand || subcommand === 'panel') {
-        const panel = buildMiddlemanPanelMessage();
-
-        if (!isSendableChannel(message.channel)) {
-          logger.warn(
-            { channelId: message.channel?.id ?? null, messageId: message.id },
-            'No se pudo enviar el panel de middleman desde texto: canal no soporta envios.',
-          );
-
-          return;
-        }
-
-        await message.channel.send(
-          brandMessageOptions({
-            ...panel,
-            allowedMentions: { parse: [] },
-          }),
-        );
-
-        return;
-      }
-
-      if (subcommand === 'open') {
-        await handlePrefixOpenCommand(message, rest);
-        return;
-      }
-
-      if (subcommand === 'claim') {
-        await handlePrefixClaimCommand(message);
-        return;
-      }
-
-      if (subcommand === 'close') {
-        await handlePrefixCloseCommand(message);
-        return;
-      }
-
-      if (subcommand === 'close-request') {
-        await handlePrefixCloseRequestCommand(message);
-        return;
-      }
-
-      await message.reply({
-        embeds: [
-          embedFactory.warning({
-            title: 'Subcomando no reconocido',
             description:
-              'Opciones validas: `panel`, `open`, `claim`, `close`, `close-request`. Usa `;middleman panel` para publicar el panel.',
+              'Ocurrio un error al procesar tu solicitud. Intentalo nuevamente en unos minutos.',
           }),
         ],
-        allowedMentions: { repliedUser: false },
-      });
-    },
-  },
 
-  async execute(interaction) {
-    const subcommand = interaction.options.getSubcommand();
-
-    switch (subcommand) {
-      case 'open':
-        await handleOpen(interaction);
-
-        break;
-
-      case 'claim':
-        await handleClaim(interaction);
-
-        break;
-
-      case 'close':
-        await handleClose(interaction);
-
-        break;
-
-      case 'close-request':
-        await handleCloseRequest(interaction);
-
-        break;
-
-      case 'panel':
-        await handlePanel(interaction);
-
-        break;
-
-      default:
-        await interaction.reply(
-          brandReplyOptions({
-            embeds: [
-              embedFactory.error({
-                title: 'Subcomando no disponible',
-
-                description: 'La accion solicitada no est implementada.',
-              }),
-            ],
-
-            flags: MessageFlags.Ephemeral,
-          }),
-        );
-    }
-  },
-};
-
-export const middlemanReviewUseCase = submitReviewUseCase;
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+        flags: MessageFlags.Ephemeral,
+      }),
+    );
+  }
+});

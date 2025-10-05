@@ -95,6 +95,8 @@ export class SubmitReviewUseCase {
     ]);
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: `<@${payload.middlemanId}>`,
+      discordDisplayName: payload.middlemanDisplayName,
+      discordAvatarUrl: payload.middlemanAvatarUrl,
       profile,
       highlight: 'Nuevo feedback registrado',
     });

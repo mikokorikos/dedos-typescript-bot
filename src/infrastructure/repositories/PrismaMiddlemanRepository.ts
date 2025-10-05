@@ -9,6 +9,12 @@ import type {
   MiddlemanClaim,
   MiddlemanProfile,
 } from '@/domain/repositories/IMiddlemanRepository';
+import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
+import {
+  DEFAULT_MIDDLEMAN_CARD_CONFIG,
+  parseMiddlemanCardConfig,
+  serializeMiddlemanCardConfig,
+} from '@/domain/value-objects/MiddlemanCardConfig';
 import type { TransactionContext } from '@/domain/repositories/transaction';
 import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
@@ -80,6 +86,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     robloxUsername: string;
     robloxUserId?: bigint | null;
     verified?: boolean;
+    cardConfig?: MiddlemanCardConfig;
   }): Promise<void> {
     await ensureUsersExist(this.prisma, [data.userId]);
 
@@ -101,10 +108,26 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       },
     });
 
+    const cardConfigPayload =
+      data.cardConfig === undefined
+        ? undefined
+        : (serializeMiddlemanCardConfig(data.cardConfig) as Prisma.JsonObject);
+
+    const createCardConfig =
+      cardConfigPayload ??
+      (serializeMiddlemanCardConfig(DEFAULT_MIDDLEMAN_CARD_CONFIG) as Prisma.JsonObject);
+
     await prisma.middleman.upsert({
       where: { userId: data.userId },
-      update: { primaryRobloxIdentityId: identity.id },
-      create: { userId: data.userId, primaryRobloxIdentityId: identity.id },
+      update: {
+        primaryRobloxIdentityId: identity.id,
+        ...(cardConfigPayload ? { cardConfig: cardConfigPayload } : {}),
+      },
+      create: {
+        userId: data.userId,
+        primaryRobloxIdentityId: identity.id,
+        cardConfig: createCardConfig,
+      },
     });
   }
 
@@ -113,6 +136,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     robloxUsername?: string | null;
     robloxUserId?: bigint | null;
     verified?: boolean;
+    cardConfig?: MiddlemanCardConfig | null;
   }): Promise<void> {
     await ensureUsersExist(this.prisma, [data.userId]);
 
@@ -123,12 +147,25 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       select: { primaryRobloxIdentityId: true },
     });
 
+    const cardConfigPayload =
+      data.cardConfig === undefined
+        ? undefined
+        : data.cardConfig === null
+          ? null
+          : (serializeMiddlemanCardConfig(data.cardConfig) as Prisma.JsonObject);
+
     if (!middleman) {
+      const fallbackConfig =
+        data.cardConfig === undefined || data.cardConfig === null
+          ? DEFAULT_MIDDLEMAN_CARD_CONFIG
+          : data.cardConfig;
+
       await this.upsertProfile({
         userId: data.userId,
         robloxUsername: data.robloxUsername ?? 'Sin registrar',
         robloxUserId: data.robloxUserId ?? null,
         verified: data.verified,
+        cardConfig: fallbackConfig,
       });
       return;
     }
@@ -136,7 +173,10 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     if (data.robloxUsername === null) {
       await prisma.middleman.update({
         where: { userId: data.userId },
-        data: { primaryRobloxIdentityId: null },
+        data: {
+          primaryRobloxIdentityId: null,
+          ...(cardConfigPayload !== undefined ? { cardConfig: cardConfigPayload } : {}),
+        },
       });
       return;
     }
@@ -165,13 +205,22 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
 
       await prisma.middleman.update({
         where: { userId: data.userId },
-        data: { primaryRobloxIdentityId: identity.id },
+        data: {
+          primaryRobloxIdentityId: identity.id,
+          ...(cardConfigPayload !== undefined ? { cardConfig: cardConfigPayload } : {}),
+        },
       });
 
       return;
     }
 
     if (middleman.primaryRobloxIdentityId === null) {
+      if (cardConfigPayload !== undefined) {
+        await prisma.middleman.update({
+          where: { userId: data.userId },
+          data: { cardConfig: cardConfigPayload },
+        });
+      }
       return;
     }
 
@@ -183,6 +232,13 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
         lastUsedAt: new Date(),
       },
     });
+
+    if (cardConfigPayload !== undefined) {
+      await prisma.middleman.update({
+        where: { userId: data.userId },
+        data: { cardConfig: cardConfigPayload },
+      });
+    }
   }
 
   public async getProfile(userId: bigint): Promise<MiddlemanProfile | null> {
@@ -198,6 +254,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       vouches_count: bigint | number | null;
       rating_sum: bigint | number | null;
       rating_count: bigint | number | null;
+      card_config: unknown;
     }>>`
       SELECT m.user_id,
         pri.id AS identity_id,
@@ -244,6 +301,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       vouches_count: bigint | number | null;
       rating_sum: bigint | number | null;
       rating_count: bigint | number | null;
+      card_config: unknown;
       updated_at: Date;
     }>>`
       SELECT stats.user_id,
@@ -306,6 +364,15 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
 
   private static isTransactionClient(value: TransactionContext): value is Prisma.TransactionClient {
     return typeof value === 'object' && value !== null && 'middlemanClaim' in value;
+  }
+
+  private static parseCardConfig(raw: unknown): MiddlemanCardConfig {
+    try {
+      const normalized = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return parseMiddlemanCardConfig(normalized ?? {});
+    } catch (_error) {
+      return DEFAULT_MIDDLEMAN_CARD_CONFIG;
+    }
   }
 
   private static mapProfile(row: {

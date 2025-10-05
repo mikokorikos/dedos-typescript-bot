@@ -1,4 +1,4 @@
-// ============================================================================
+﻿// ============================================================================
 // RUTA: src/presentation/commands/middleman/mm.ts
 // ============================================================================
 
@@ -7,6 +7,7 @@ import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.
 
 import { prisma } from '@/infrastructure/db/prisma';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
+import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import { env } from '@/shared/config/env';
@@ -21,6 +22,29 @@ import {
 const middlemanDirectoryRepo = new PrismaMiddlemanRepository(prisma);
 
 const MENTION_PATTERN = /^(?:<@!?(\d{17,20})>|(\d{17,20}))$/u;
+
+const parseCardConfigInput = (raw: string | null): { value: ReturnType<typeof parseMiddlemanCardConfig> | null | undefined; error?: string } => {
+  if (raw === null || raw === undefined) {
+    return { value: undefined };
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { value: undefined };
+  }
+
+  if (trimmed.toLowerCase() === "reset") {
+    return { value: null };
+  }
+
+  try {
+    const parsedJson = JSON.parse(trimmed);
+    return { value: parseMiddlemanCardConfig(parsedJson) };
+  } catch (_error) {
+    return { value: undefined, error: "Formato de decoración inválido. Proporciona JSON válido o utiliza "reset"." };
+  }
+};
+
 
 const ensureMessageCanManageDirectory = async (message: Message): Promise<GuildMember | null> => {
   if (!message.guild) {
@@ -114,18 +138,42 @@ const handleAdd = async (interaction: ChatInputCommandInteraction): Promise<void
 
   const target = interaction.options.getUser('usuario', true);
   const robloxUsername = interaction.options.getString('roblox', true);
+  const decorOption = interaction.options.getString('decor');
+  const { value: cardConfig, error } = parseCardConfigInput(decorOption);
+
+  if (error) {
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.error({
+            title: 'Decoración inválida',
+            description: error,
+          }),
+        ],
+      }),
+    );
+
+    return;
+  }
 
   await middlemanDirectoryRepo.upsertProfile({
     userId: BigInt(target.id),
     robloxUsername,
+    cardConfig: cardConfig ?? undefined,
   });
+
+  const decorMessage = cardConfig === null
+    ? ' Se restableció la decoración al diseño predeterminado.'
+    : cardConfig
+    ? ' Se aplicó la decoración personalizada.'
+    : '';
 
   await interaction.editReply(
     brandEditReplyOptions({
       embeds: [
         embedFactory.success({
           title: 'Middleman registrado',
-          description: `${target.toString()} ahora forma parte del directorio de middlemen con el usuario Roblox **${robloxUsername}**.`,
+          description: `${target.toString()} ahora forma parte del directorio de middlemen con el usuario Roblox **${robloxUsername}**.${decorMessage}`,
         }),
       ],
     }),
@@ -137,20 +185,50 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
 
   const target = interaction.options.getUser('usuario', true);
   const robloxUsername = interaction.options.getString('roblox');
+  const decorOption = interaction.options.getString('decor');
+  const { value: cardConfig, error } = parseCardConfigInput(decorOption);
 
-  await middlemanDirectoryRepo.updateProfile({
+  if (error) {
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.error({
+            title: 'Decoración inválida',
+            description: error,
+          }),
+        ],
+      }),
+    );
+
+    return;
+  }
+
+  const updatePayload: { userId: bigint; robloxUsername?: string | null; cardConfig?: ReturnType<typeof parseMiddlemanCardConfig> | null } = {
     userId: BigInt(target.id),
     robloxUsername: robloxUsername ?? null,
-  });
+  };
+
+  if (cardConfig !== undefined) {
+    updatePayload.cardConfig = cardConfig;
+  }
+
+  await middlemanDirectoryRepo.updateProfile(updatePayload);
+
+  const decorMessage = cardConfig === null
+    ? ' Se restableció la decoración al diseño predeterminado.'
+    : cardConfig
+    ? ' Se aplicó la decoración personalizada.'
+    : '';
+  const baseDescription = robloxUsername
+    ? `${target.toString()} ahora utiliza el usuario Roblox **${robloxUsername}**.`
+    : `${target.toString()} mantiene su informacion pero se actualizo la ficha.`;
 
   await interaction.editReply(
     brandEditReplyOptions({
       embeds: [
         embedFactory.success({
           title: 'Middleman actualizado',
-          description: robloxUsername
-            ? `${target.toString()} ahora utiliza el usuario Roblox **${robloxUsername}**.`
-            : `${target.toString()} mantiene su informacion pero se actualizo la ficha.`,
+          description: `${baseDescription}${decorMessage}`,
         }),
       ],
     }),
@@ -231,14 +309,14 @@ const handleList = async (interaction: ChatInputCommandInteraction): Promise<voi
 };
 
 const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<string>): Promise<void> => {
-  const [userArg, ...usernameParts] = args;
+  const [userArg, ...rawParts] = args;
 
-  if (!userArg || usernameParts.length === 0) {
+  if (!userArg || rawParts.length === 0) {
     await message.reply({
       embeds: [
         embedFactory.warning({
           title: 'Uso del comando',
-          description: 'Sintaxis: `;mm add @usuario roblox_username`',
+          description: 'Sintaxis: `;mm add @usuario roblox_username [decor_json|reset]`',
         }),
       ],
       allowedMentions: { repliedUser: false },
@@ -265,7 +343,25 @@ const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<st
     return;
   }
 
-  const robloxUsername = usernameParts.join(' ').trim();
+  let decorRaw: string | null = null;
+  let usernameTokens = rawParts;
+
+  for (let i = 0; i < rawParts.length; i += 1) {
+    const token = rawParts[i];
+    if (token.toLowerCase() === 'reset') {
+      decorRaw = 'reset';
+      usernameTokens = rawParts.slice(0, i);
+      break;
+    }
+
+    if (token.startsWith('{')) {
+      decorRaw = rawParts.slice(i).join(' ').trim();
+      usernameTokens = rawParts.slice(0, i);
+      break;
+    }
+  }
+
+  const robloxUsername = usernameTokens.join(' ').trim();
   if (robloxUsername.length < 3 || robloxUsername.length > 50) {
     await message.reply({
       embeds: [
@@ -279,13 +375,38 @@ const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<st
     return;
   }
 
-  await middlemanDirectoryRepo.upsertProfile({ userId: BigInt(targetId), robloxUsername });
+  const { value: cardConfig, error } = parseCardConfigInput(decorRaw);
+
+  if (error) {
+    await message.reply({
+      embeds: [
+        embedFactory.error({
+          title: 'Decoración inválida',
+          description: error,
+        }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  await middlemanDirectoryRepo.upsertProfile({
+    userId: BigInt(targetId),
+    robloxUsername,
+    cardConfig: cardConfig ?? undefined,
+  });
+
+  const decorMessage = cardConfig === null
+    ? ' Se restableció la decoración al diseño predeterminado.'
+    : cardConfig
+    ? ' Se aplicó la decoración personalizada.'
+    : '';
 
   await message.reply({
     embeds: [
       embedFactory.success({
         title: 'Middleman registrado',
-        description: `<@${targetId}> ahora forma parte del directorio con el usuario Roblox **${robloxUsername}**.`,
+        description: `<@${targetId}> ahora forma parte del directorio de middlemen con el usuario Roblox **${robloxUsername}**.${decorMessage}`,
       }),
     ],
     allowedMentions: { repliedUser: false },
@@ -293,14 +414,14 @@ const handlePrefixDirectoryAdd = async (message: Message, args: ReadonlyArray<st
 };
 
 const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<string>): Promise<void> => {
-  const [userArg, ...usernameParts] = args;
+  const [userArg, ...rawParts] = args;
 
   if (!userArg) {
     await message.reply({
       embeds: [
         embedFactory.warning({
           title: 'Uso del comando',
-          description: 'Sintaxis: `;mm set @usuario [roblox_username]`',
+          description: 'Sintaxis: `;mm set @usuario [roblox_username] [decor_json|reset]`',
         }),
       ],
       allowedMentions: { repliedUser: false },
@@ -327,20 +448,81 @@ const handlePrefixDirectorySet = async (message: Message, args: ReadonlyArray<st
     return;
   }
 
-  const robloxUsername = usernameParts.join(' ').trim();
-  await middlemanDirectoryRepo.updateProfile({
+  let decorRaw: string | null = null;
+  let usernameTokens = rawParts;
+
+  for (let i = 0; i < rawParts.length; i += 1) {
+    const token = rawParts[i];
+    if (token.toLowerCase() === 'reset') {
+      decorRaw = 'reset';
+      usernameTokens = rawParts.slice(0, i);
+      break;
+    }
+
+    if (token.startsWith('{')) {
+      decorRaw = rawParts.slice(i).join(' ').trim();
+      usernameTokens = rawParts.slice(0, i);
+      break;
+    }
+  }
+
+  const robloxUsername = usernameTokens.join(' ').trim();
+  if (robloxUsername && (robloxUsername.length < 3 || robloxUsername.length > 50)) {
+    await message.reply({
+      embeds: [
+        embedFactory.warning({
+          title: 'Usuario de Roblox invalido',
+          description: 'Debe tener entre 3 y 50 caracteres.',
+        }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  const { value: cardConfig, error } = parseCardConfigInput(decorRaw);
+
+  if (error) {
+    await message.reply({
+      embeds: [
+        embedFactory.error({
+          title: 'Decoración inválida',
+          description: error,
+        }),
+      ],
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  const updatePayload: { userId: bigint; robloxUsername?: string | null; cardConfig?: ReturnType<typeof parseMiddlemanCardConfig> | null } = {
     userId: BigInt(targetId),
-    robloxUsername: robloxUsername.length > 0 ? robloxUsername : null,
-  });
+  };
+
+  if (robloxUsername.length > 0) {
+    updatePayload.robloxUsername = robloxUsername;
+  }
+
+  if (cardConfig !== undefined) {
+    updatePayload.cardConfig = cardConfig;
+  }
+
+  await middlemanDirectoryRepo.updateProfile(updatePayload);
+
+  const decorMessage = cardConfig === null
+    ? ' Se restableció la decoración al diseño predeterminado.'
+    : cardConfig
+    ? ' Se aplicó la decoración personalizada.'
+    : '';
+  const baseDescription = robloxUsername.length > 0
+    ? `<@${targetId}> ahora utiliza el usuario Roblox **${robloxUsername}**.`
+    : `<@${targetId}> mantiene su informacion pero se actualizo la ficha.`;
 
   await message.reply({
     embeds: [
       embedFactory.success({
-        title: 'Ficha actualizada',
-        description:
-          robloxUsername.length > 0
-            ? `<@${targetId}> ahora usa el usuario Roblox **${robloxUsername}**.`
-            : `Se limpio el usuario principal de <@${targetId}>.`,
+        title: 'Middleman actualizado',
+        description: `${baseDescription}${decorMessage}`,
       }),
     ],
     allowedMentions: { repliedUser: false },
@@ -457,6 +639,12 @@ export const middlemanDirectoryCommand: Command = {
             .setMaxLength(50)
             .setRequired(true),
         ),
+        .addStringOption((option) =>
+          option
+            .setName('decor')
+            .setDescription('Configuración JSON para la tarjeta (usa "reset" para restablecer)')
+            .setRequired(false),
+        ),
     )
     .addSubcommand((sub) =>
       sub
@@ -470,6 +658,12 @@ export const middlemanDirectoryCommand: Command = {
             .setMinLength(3)
             .setMaxLength(50)
             .setRequired(false),
+        .addStringOption((option) =>
+          option
+            .setName('decor')
+            .setDescription('Configuración JSON para personalizar la tarjeta (usa "reset" para restablecer)')
+            .setRequired(false),
+        ),
         ),
     )
     .addSubcommand((sub) =>
