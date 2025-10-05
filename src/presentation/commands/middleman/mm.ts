@@ -5,8 +5,10 @@
 import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 
+import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
+import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaMiddlemanRepository';
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
@@ -20,6 +22,7 @@ import {
 } from '@/shared/utils/branding';
 
 const middlemanDirectoryRepo = new PrismaMiddlemanRepository(prisma);
+const integerFormatter = new Intl.NumberFormat('es-MX');
 
 const MENTION_PATTERN = /^(?:<@!?(\d{17,20})>|(\d{17,20}))$/u;
 
@@ -238,30 +241,128 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
   );
 };
 
+interface StatsViewModel {
+  readonly average: number;
+  readonly robloxUsername: string;
+  readonly metrics: ReadonlyArray<{ label: string; value: string; emphasis?: boolean }>;
+  readonly subtitleParts: string[];
+}
+
+const buildStatsViewModel = (profile: MiddlemanProfile): StatsViewModel => {
+  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
+  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+  const metrics: StatsViewModel['metrics'] = [
+    {
+      label: 'Vouches',
+      value: integerFormatter.format(profile.vouches),
+      emphasis: true,
+    },
+    {
+      label: 'Valoraciones',
+      value: integerFormatter.format(profile.ratingCount),
+    },
+    {
+      label: 'Promedio',
+      value: `${average.toFixed(2)} / 5 ⭐`,
+    },
+  ];
+
+  const subtitleParts = [`Roblox: ${robloxUsername}`];
+  if (profile.cardConfig.highlight) {
+    subtitleParts.push(profile.cardConfig.highlight);
+  }
+
+  return {
+    average,
+    robloxUsername,
+    metrics,
+    subtitleParts,
+  };
+};
+
 const handleStats = async (interaction: ChatInputCommandInteraction): Promise<void> => {
   const target = interaction.options.getUser('usuario') ?? interaction.user;
   const profile = await middlemanDirectoryRepo.getProfile(BigInt(target.id));
 
   if (!profile) {
-    await interaction.reply({
+    await interaction.editReply({
       embeds: [
         embedFactory.warning({
           title: 'Sin datos registrados',
           description: `${target.toString()} todava no cuenta con estadsticas como middleman.`,
         }),
       ],
-      flags: MessageFlags.Ephemeral,
     });
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+  const statsView = buildStatsViewModel(profile);
+
+  logger.info(
+    {
+      command: 'mm.stats',
+      targetId: target.id,
+      paletteAccent: profile.cardConfig.accent,
+      metrics: statsView.metrics,
+      format: 'gif',
+    },
+    'Generando estadisticas de middleman.',
+  );
+
+  const statsCard = await middlemanCardGenerator.renderStatsCard({
+    title: `Estadsticas de ${target.username}`,
+    subtitle: statsView.subtitleParts.join(' • '),
+    metrics: statsView.metrics,
+    paletteOverrides: {
+      backgroundStart: profile.cardConfig.gradientStart,
+      backgroundEnd: profile.cardConfig.gradientEnd,
+      accent: profile.cardConfig.accent,
+      highlight: profile.cardConfig.accent,
+      highlightSoft: profile.cardConfig.accentSoft,
+    },
+    pattern: profile.cardConfig.pattern,
+    watermark: profile.cardConfig.watermark ?? null,
+  });
+
+  if (statsCard) {
+    logger.info(
+      {
+        command: 'mm.stats',
+        targetId: target.id,
+        attachmentName: statsCard.name,
+        format: 'gif',
+      },
+      'Enviando tarjeta de estadisticas de middleman en formato GIF con decoracion personalizada.',
+    );
+
+    await interaction.editReply(
+      brandEditReplyOptions({
+        embeds: [
+          embedFactory.info({
+            title: `Estadsticas de ${target.username}`,
+            description: `Se adjunta la tarjeta animada de estadsticas con los colores configurados por ${target.toString()}.`,
+          }),
+        ],
+        files: [statsCard],
+      }),
+    );
+    return;
+  }
+
+  logger.warn(
+    {
+      command: 'mm.stats',
+      targetId: target.id,
+      format: 'gif',
+    },
+    'Fallo la generacion de la tarjeta de estadisticas GIF, respondiendo con embed de texto.',
+  );
+
   const description = [
-    ` Usuario de Roblox: **${robloxUsername}**`,
+    ` Usuario de Roblox: **${statsView.robloxUsername}**`,
     ` Vouches registrados: **${profile.vouches}**`,
     ` Valoraciones recibidas: **${profile.ratingCount}**`,
-    ` Promedio actual: **${average.toFixed(2)} **`,
+    ` Promedio actual: **${statsView.average.toFixed(2)} **`,
   ].join('\n');
 
   await interaction.editReply(
@@ -558,19 +659,79 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+  const statsView = buildStatsViewModel(profile);
+  const cachedMentionUser = message.mentions.users.first();
+  const targetUser =
+    cachedMentionUser?.id === targetId
+      ? cachedMentionUser
+      : await message.client.users.fetch(targetId).catch(() => null);
+  const displayName = targetUser?.username ?? `Usuario ${targetId}`;
+
+  logger.info(
+    {
+      command: 'mm.stats.prefix',
+      targetId,
+      paletteAccent: profile.cardConfig.accent,
+      metrics: statsView.metrics,
+      format: 'gif',
+    },
+    'Generando estadisticas de middleman via prefijo.',
+  );
+
+  const statsCard = await middlemanCardGenerator.renderStatsCard({
+    title: `Estadsticas de ${displayName}`,
+    subtitle: statsView.subtitleParts.join(' • '),
+    metrics: statsView.metrics,
+    paletteOverrides: {
+      backgroundStart: profile.cardConfig.gradientStart,
+      backgroundEnd: profile.cardConfig.gradientEnd,
+      accent: profile.cardConfig.accent,
+      highlight: profile.cardConfig.accent,
+      highlightSoft: profile.cardConfig.accentSoft,
+    },
+    pattern: profile.cardConfig.pattern,
+    watermark: profile.cardConfig.watermark ?? null,
+  });
+
+  if (statsCard) {
+    logger.info(
+      {
+        command: 'mm.stats.prefix',
+        targetId,
+        attachmentName: statsCard.name,
+        format: 'gif',
+      },
+      'Enviando tarjeta de estadisticas en formato GIF via prefijo.',
+    );
+
+    await message.reply({
+      content: `Tarjeta de estadsticas de <@${targetId}> generada con la decoracion configurada.`,
+      files: [statsCard],
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  logger.warn(
+    {
+      command: 'mm.stats.prefix',
+      targetId,
+      format: 'gif',
+    },
+    'No se pudo generar la tarjeta de estadisticas GIF, respondiendo con embed de texto.',
+  );
+
   const description = [
-    `- Usuario de Roblox: **${robloxUsername}**`,
+    `- Usuario de Roblox: **${statsView.robloxUsername}**`,
     `- Vouches registrados: **${profile.vouches}**`,
     `- Valoraciones recibidas: **${profile.ratingCount}**`,
-    `- Promedio actual: **${average.toFixed(2)}**`,
+    `- Promedio actual: **${statsView.average.toFixed(2)}**`,
   ].join('\n');
 
   await message.reply({
     embeds: [
       embedFactory.info({
-        title: `Estadisticas de <@${targetId}>`,
+        title: `Estadisticas de ${displayName}`,
         description,
       }),
     ],

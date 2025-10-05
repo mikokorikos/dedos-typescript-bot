@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { SKRSContext2D } from '@napi-rs/canvas';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { AttachmentBuilder } from 'discord.js';
+import GIFEncoder from 'gifencoder';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
 import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
@@ -57,6 +58,25 @@ const componentToHex = (value: number): string => value.toString(16).padStart(2,
 
 const rgbToHex = (r: number, g: number, b: number): string =>
   `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+
+type GifEncoderInstance = InstanceType<typeof GIFEncoder>;
+type GifEncoderFrame = Parameters<GifEncoderInstance['addFrame']>[0];
+
+const encodeCanvasAsGif = (
+  ctx: SKRSContext2D,
+  width: number,
+  height: number,
+  options?: { delayMs?: number },
+): Buffer => {
+  const encoder = new GIFEncoder(width, height);
+  encoder.start();
+  encoder.setRepeat(0);
+  encoder.setDelay(Math.max(16, Math.round(options?.delayMs ?? 80)));
+  encoder.setQuality(10);
+  encoder.addFrame(ctx as unknown as GifEncoderFrame);
+  encoder.finish();
+  return Buffer.from(encoder.out.getData());
+};
 
 const adjustHexBrightness = (hex: string, factor: number): string => {
   const sanitized = sanitizeHexColor(hex);
@@ -135,6 +155,9 @@ interface StatsCardOptions {
   readonly title: string;
   readonly subtitle?: string | null;
   readonly metrics: readonly StatsCardMetric[];
+  readonly paletteOverrides?: Partial<typeof palette>;
+  readonly pattern?: MiddlemanCardConfig['pattern'];
+  readonly watermark?: string | null;
 }
 
 type CanvasImageSource = Parameters<SKRSContext2D['drawImage']>[0];
@@ -544,6 +567,7 @@ const drawMetricPill = (
   title: string,
   value: string,
   highlight = false,
+  paletteOverrides: typeof palette = palette,
 ): void => {
   const width = 220;
   const height = 86;
@@ -554,16 +578,16 @@ const drawMetricPill = (
     width,
     height,
     22,
-    highlight ? 'rgba(17, 200, 179, 0.16)' : palette.panel,
-    highlight ? 'rgba(17, 200, 179, 0.45)' : palette.border,
+    highlight ? withAlpha(paletteOverrides.accent, 0.16) : paletteOverrides.panel,
+    highlight ? withAlpha(paletteOverrides.accent, 0.45) : paletteOverrides.border,
   );
 
   ctx.font = '500 18px "Segoe UI", Arial';
-  ctx.fillStyle = palette.textMuted;
+  ctx.fillStyle = paletteOverrides.textMuted;
   ctx.fillText(title.toUpperCase(), x + 24, y + 32);
 
   ctx.font = '700 32px "Segoe UI", Arial';
-  ctx.fillStyle = palette.textPrimary;
+  ctx.fillStyle = paletteOverrides.textPrimary;
   ctx.fillText(value, x + 24, y + 64);
 };
 
@@ -825,7 +849,6 @@ class MiddlemanCardGenerator {
       const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
       const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
 
-
       drawAvatar(
         ctx,
         avatarSource,
@@ -833,10 +856,8 @@ class MiddlemanCardGenerator {
         132,
         AVATAR_SIZE,
         config.avatarStyle,
-<
         avatarBorderColor,
         avatarGlow,
-
       );
 
       const infoX = 82 + AVATAR_SIZE + 48;
@@ -968,25 +989,72 @@ class MiddlemanCardGenerator {
   }
 
   public async renderStatsCard(options: StatsCardOptions): Promise<AttachmentBuilder | null> {
-    const cacheKey = createCacheKey('stats-card', options);
-    const cached = this.getFromCache(cacheKey, 'dedos-stats-card.png');
+    const paletteOverrides: typeof palette = {
+      ...palette,
+      ...options.paletteOverrides,
+    };
+
+    if (!options.paletteOverrides?.highlight && options.paletteOverrides?.accent) {
+      paletteOverrides.highlight = paletteOverrides.accent;
+    }
+    if (!options.paletteOverrides?.highlightSoft && options.paletteOverrides?.accent) {
+      paletteOverrides.highlightSoft = withAlpha(paletteOverrides.accent, 0.28);
+    }
+
+    const cacheKey = createCacheKey('stats-card', {
+      title: options.title,
+      subtitle: options.subtitle ?? null,
+      metrics: options.metrics,
+      palette: {
+        backgroundStart: paletteOverrides.backgroundStart,
+        backgroundEnd: paletteOverrides.backgroundEnd,
+        accent: paletteOverrides.accent,
+        highlight: paletteOverrides.highlight,
+        highlightSoft: paletteOverrides.highlightSoft,
+      },
+      pattern: options.pattern ?? 'grid',
+      watermark: options.watermark ?? null,
+    });
+    const cached = this.getFromCache(cacheKey, 'dedos-stats-card.gif');
     if (cached) {
+      logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas animada recuperada desde cache.');
       return cached;
     }
 
     try {
+      logger.info(
+        {
+          title: options.title,
+          metrics: options.metrics.map((metric) => ({ label: metric.label, emphasis: Boolean(metric.emphasis) })),
+          palette: {
+            accent: paletteOverrides.accent,
+            gradient: [paletteOverrides.backgroundStart, paletteOverrides.backgroundEnd],
+          },
+        },
+        'Generando nueva tarjeta de estadisticas.',
+      );
+
       const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
       const ctx = canvas.getContext('2d');
-      drawBackground(ctx);
-      drawRoundedRect(ctx, 64, 104, CARD_WIDTH - 128, CARD_HEIGHT - 168, 26, palette.panel, palette.border);
+      drawBackground(ctx, paletteOverrides, options.pattern ?? 'grid');
+      drawRoundedRect(
+        ctx,
+        64,
+        104,
+        CARD_WIDTH - 128,
+        CARD_HEIGHT - 168,
+        26,
+        paletteOverrides.panel,
+        paletteOverrides.border,
+      );
 
       ctx.font = '700 46px "Segoe UI", Arial';
-      ctx.fillStyle = palette.textPrimary;
+      ctx.fillStyle = paletteOverrides.textPrimary;
       ctx.fillText(options.title, 96, 170);
 
       if (options.subtitle) {
         ctx.font = '500 22px "Segoe UI", Arial';
-        ctx.fillStyle = palette.textSecondary;
+        ctx.fillStyle = paletteOverrides.textSecondary;
         ctx.fillText(options.subtitle, 96, 206);
       }
 
@@ -995,14 +1063,34 @@ class MiddlemanCardGenerator {
 
       options.metrics.forEach((metric, index) => {
         const colX = 96 + index * (columnWidth + 36);
-        drawMetricPill(ctx, colX, 240, metric.label, metric.value, Boolean(metric.emphasis));
+        drawMetricPill(
+          ctx,
+          colX,
+          240,
+          metric.label,
+          metric.value,
+          Boolean(metric.emphasis),
+          paletteOverrides,
+        );
       });
 
-      const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(cacheKey, buffer);
-      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
+      if (options.watermark) {
+        ctx.font = '500 18px "Segoe UI", Arial';
+        ctx.fillStyle = paletteOverrides.textMuted;
+        ctx.textAlign = 'right';
+        ctx.fillText(options.watermark, CARD_WIDTH - 72, CARD_HEIGHT - 58);
+        ctx.textAlign = 'left';
+      }
+
+      const gifBuffer = encodeCanvasAsGif(ctx, CARD_WIDTH, CARD_HEIGHT);
+      this.storeInCache(cacheKey, gifBuffer);
+      logger.info(
+        { cacheKey, title: options.title },
+        'Tarjeta de estadisticas animada generada y almacenada en cache.',
+      );
+      return new AttachmentBuilder(gifBuffer, { name: 'dedos-stats-card.gif' });
     } catch (error) {
-      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas.');
+      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas animada.');
       return null;
     }
   }
