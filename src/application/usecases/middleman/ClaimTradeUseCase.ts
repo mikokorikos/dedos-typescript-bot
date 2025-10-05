@@ -66,7 +66,17 @@ export class ClaimTradeUseCase {
 
     const middlemanMention = `<@${payload.middlemanId}>`;
     const middlemanMember = await channel.guild.members.fetch(payload.middlemanId).catch(() => null);
-    const middlemanUser = middlemanMember?.user ?? null;
+    let middlemanUser = middlemanMember?.user ?? null;
+    if (!middlemanUser) {
+      middlemanUser = await channel.client.users.fetch(payload.middlemanId).catch(() => null);
+    }
+    if (
+      middlemanUser &&
+      typeof middlemanUser.banner === 'undefined' &&
+      typeof middlemanUser.fetch === 'function'
+    ) {
+      middlemanUser = await middlemanUser.fetch().catch(() => middlemanUser);
+    }
     const middlemanDisplayName = middlemanMember?.displayName ?? middlemanUser?.username ?? null;
     const middlemanAvatarUrl = (() => {
       if (middlemanMember && typeof middlemanMember.displayAvatarURL === 'function') {
@@ -79,11 +89,18 @@ export class ClaimTradeUseCase {
 
       return undefined;
     })();
+    const middlemanBannerUrl =
+      middlemanUser && typeof middlemanUser.bannerURL === 'function'
+        ? middlemanUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
+          middlemanUser.bannerURL({ size: 2048, forceStatic: false }) ??
+          undefined
+        : undefined;
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: middlemanAvatarUrl,
+      discordBannerUrl: middlemanBannerUrl,
       profile,
       highlight: 'Disponible para asistencia',
     });
