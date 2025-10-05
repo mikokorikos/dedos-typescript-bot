@@ -199,10 +199,7 @@ const normalizeChips = (
 
 export const MiddlemanCardConfigSchema = MiddlemanCardConfigBaseSchema.transform(
   (config) => {
-    const accentSoft =
-      config.accentSoft != null
-        ? normalizeHex(config.accentSoft)
-        : addAlphaToHex(config.accent, 0.32);
+    const accentSoft = normalizeHex(config.accentSoft ?? config.accent);
 
     const background = config.background
       ? {
