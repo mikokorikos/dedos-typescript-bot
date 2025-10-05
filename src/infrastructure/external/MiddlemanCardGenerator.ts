@@ -7,6 +7,7 @@ import { createHash } from 'node:crypto';
 import type { SKRSContext2D } from '@napi-rs/canvas';
 import { createCanvas, loadImage } from '@napi-rs/canvas';
 import { AttachmentBuilder } from 'discord.js';
+import GIFEncoder from 'gifencoder';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
 import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
@@ -57,6 +58,25 @@ const componentToHex = (value: number): string => value.toString(16).padStart(2,
 
 const rgbToHex = (r: number, g: number, b: number): string =>
   `#${componentToHex(r)}${componentToHex(g)}${componentToHex(b)}`;
+
+type GifEncoderInstance = InstanceType<typeof GIFEncoder>;
+type GifEncoderFrame = Parameters<GifEncoderInstance['addFrame']>[0];
+
+const encodeCanvasAsGif = (
+  ctx: SKRSContext2D,
+  width: number,
+  height: number,
+  options?: { delayMs?: number },
+): Buffer => {
+  const encoder = new GIFEncoder(width, height);
+  encoder.start();
+  encoder.setRepeat(0);
+  encoder.setDelay(Math.max(16, Math.round(options?.delayMs ?? 80)));
+  encoder.setQuality(10);
+  encoder.addFrame(ctx as unknown as GifEncoderFrame);
+  encoder.finish();
+  return Buffer.from(encoder.out.getData());
+};
 
 const adjustHexBrightness = (hex: string, factor: number): string => {
   const sanitized = sanitizeHexColor(hex);
@@ -995,9 +1015,11 @@ class MiddlemanCardGenerator {
       pattern: options.pattern ?? 'grid',
       watermark: options.watermark ?? null,
     });
-    const cached = this.getFromCache(cacheKey, 'dedos-stats-card.png');
+
+    const cached = this.getFromCache(cacheKey, 'dedos-stats-card.gif');
     if (cached) {
-      logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas recuperada desde cache.');
+      logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas animada recuperada desde cache.');
+
       return cached;
     }
 
@@ -1067,7 +1089,7 @@ class MiddlemanCardGenerator {
       logger.info({ cacheKey, title: options.title }, 'Tarjeta de estadisticas generada y almacenada en cache.');
       return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
     } catch (error) {
-      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas.');
+      logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadisticas animada.');
       return null;
     }
   }

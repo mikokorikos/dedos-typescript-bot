@@ -5,6 +5,7 @@
 import type { ChatInputCommandInteraction, GuildMember, Message } from 'discord.js';
 import { MessageFlags, PermissionFlagsBits, SlashCommandBuilder } from 'discord.js';
 
+import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
 import { parseMiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import { prisma } from '@/infrastructure/db/prisma';
 import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
@@ -240,26 +241,17 @@ const handleSet = async (interaction: ChatInputCommandInteraction): Promise<void
   );
 };
 
-const handleStats = async (interaction: ChatInputCommandInteraction): Promise<void> => {
-  const target = interaction.options.getUser('usuario') ?? interaction.user;
-  const profile = await middlemanDirectoryRepo.getProfile(BigInt(target.id));
+interface StatsViewModel {
+  readonly average: number;
+  readonly robloxUsername: string;
+  readonly metrics: ReadonlyArray<{ label: string; value: string; emphasis?: boolean }>;
+  readonly subtitleParts: string[];
+}
 
-  if (!profile) {
-    await interaction.reply({
-      embeds: [
-        embedFactory.warning({
-          title: 'Sin datos registrados',
-          description: `${target.toString()} todava no cuenta con estadsticas como middleman.`,
-        }),
-      ],
-      flags: MessageFlags.Ephemeral,
-    });
-    return;
-  }
-
+const buildStatsViewModel = (profile: MiddlemanProfile): StatsViewModel => {
   const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
   const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
-  const metrics = [
+  const metrics: StatsViewModel['metrics'] = [
     {
       label: 'Vouches',
       value: integerFormatter.format(profile.vouches),
@@ -280,12 +272,43 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
     subtitleParts.push(profile.cardConfig.highlight);
   }
 
+  return {
+    average,
+    robloxUsername,
+    metrics,
+    subtitleParts,
+  };
+};
+
+const handleStats = async (interaction: ChatInputCommandInteraction): Promise<void> => {
+  const target = interaction.options.getUser('usuario') ?? interaction.user;
+  const profile = await middlemanDirectoryRepo.getProfile(BigInt(target.id));
+
+  if (!profile) {
+    await interaction.editReply({
+      embeds: [
+        embedFactory.warning({
+          title: 'Sin datos registrados',
+          description: `${target.toString()} todava no cuenta con estadsticas como middleman.`,
+        }),
+      ],
+    });
+    return;
+  }
+
+
+  const statsView = buildStatsViewModel(profile);
+
+
   logger.info(
     {
       command: 'mm.stats',
       targetId: target.id,
       paletteAccent: profile.cardConfig.accent,
-      metrics,
+
+      metrics: statsView.metrics,
+      format: 'gif',
+
     },
     'Generando estadisticas de middleman.',
   );
@@ -338,10 +361,10 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
   );
 
   const description = [
-    ` Usuario de Roblox: **${robloxUsername}**`,
+    ` Usuario de Roblox: **${statsView.robloxUsername}**`,
     ` Vouches registrados: **${profile.vouches}**`,
     ` Valoraciones recibidas: **${profile.ratingCount}**`,
-    ` Promedio actual: **${average.toFixed(2)} **`,
+    ` Promedio actual: **${statsView.average.toFixed(2)} **`,
   ].join('\n');
 
   await interaction.editReply(
@@ -638,19 +661,79 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
     return;
   }
 
-  const average = profile.ratingCount > 0 ? profile.ratingSum / profile.ratingCount : 0;
-  const robloxUsername = profile.primaryIdentity?.username ?? 'Sin registrar';
+  const statsView = buildStatsViewModel(profile);
+  const cachedMentionUser = message.mentions.users.first();
+  const targetUser =
+    cachedMentionUser?.id === targetId
+      ? cachedMentionUser
+      : await message.client.users.fetch(targetId).catch(() => null);
+  const displayName = targetUser?.username ?? `Usuario ${targetId}`;
+
+  logger.info(
+    {
+      command: 'mm.stats.prefix',
+      targetId,
+      paletteAccent: profile.cardConfig.accent,
+      metrics: statsView.metrics,
+      format: 'gif',
+    },
+    'Generando estadisticas de middleman via prefijo.',
+  );
+
+  const statsCard = await middlemanCardGenerator.renderStatsCard({
+    title: `Estadsticas de ${displayName}`,
+    subtitle: statsView.subtitleParts.join(' • '),
+    metrics: statsView.metrics,
+    paletteOverrides: {
+      backgroundStart: profile.cardConfig.gradientStart,
+      backgroundEnd: profile.cardConfig.gradientEnd,
+      accent: profile.cardConfig.accent,
+      highlight: profile.cardConfig.accent,
+      highlightSoft: profile.cardConfig.accentSoft,
+    },
+    pattern: profile.cardConfig.pattern,
+    watermark: profile.cardConfig.watermark ?? null,
+  });
+
+  if (statsCard) {
+    logger.info(
+      {
+        command: 'mm.stats.prefix',
+        targetId,
+        attachmentName: statsCard.name,
+        format: 'gif',
+      },
+      'Enviando tarjeta de estadisticas en formato GIF via prefijo.',
+    );
+
+    await message.reply({
+      content: `Tarjeta de estadsticas de <@${targetId}> generada con la decoracion configurada.`,
+      files: [statsCard],
+      allowedMentions: { repliedUser: false },
+    });
+    return;
+  }
+
+  logger.warn(
+    {
+      command: 'mm.stats.prefix',
+      targetId,
+      format: 'gif',
+    },
+    'No se pudo generar la tarjeta de estadisticas GIF, respondiendo con embed de texto.',
+  );
+
   const description = [
-    `- Usuario de Roblox: **${robloxUsername}**`,
+    `- Usuario de Roblox: **${statsView.robloxUsername}**`,
     `- Vouches registrados: **${profile.vouches}**`,
     `- Valoraciones recibidas: **${profile.ratingCount}**`,
-    `- Promedio actual: **${average.toFixed(2)}**`,
+    `- Promedio actual: **${statsView.average.toFixed(2)}**`,
   ].join('\n');
 
   await message.reply({
     embeds: [
       embedFactory.info({
-        title: `Estadisticas de <@${targetId}>`,
+        title: `Estadisticas de ${displayName}`,
         description,
       }),
     ],
