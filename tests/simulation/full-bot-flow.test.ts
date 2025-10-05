@@ -854,7 +854,7 @@ describe('Simulación integral del bot', () => {
       createMockAttachment('profile-card.png'),
     );
     vi.spyOn(middlemanCardGenerator, 'renderStatsCard').mockResolvedValue(
-      createMockAttachment('stats-card.png'),
+      createMockAttachment('stats-card.gif'),
     );
     vi.spyOn(memberCardGenerator, 'render').mockResolvedValue(createMockAttachment('member-card.png'));
 
