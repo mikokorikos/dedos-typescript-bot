@@ -478,6 +478,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
         middlemanUser?.globalName ?? middlemanUser?.username ?? `Middleman #${middlemanId}`;
       const middlemanAvatarUrl = middlemanUser?.displayAvatarURL({ extension: 'png', size: 256 }) ?? undefined;
 
+
       await submitReviewUseCase.execute(
         {
           ticketId,

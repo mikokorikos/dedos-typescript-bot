@@ -124,6 +124,7 @@ export class SubmitReviewUseCase {
           undefined
         : undefined;
 
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
