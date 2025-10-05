@@ -498,6 +498,7 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
           ? (middlemanUser.hexAccentColor as string | null) ?? undefined
           : undefined;
 
+
       await submitReviewUseCase.execute(
         {
           ticketId,

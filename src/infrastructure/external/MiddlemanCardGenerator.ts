@@ -727,6 +727,7 @@ class MiddlemanCardGenerator {
         }
       }
 
+
       drawBackground(ctx, paletteOverrides, bannerImage ? 'none' : config.pattern);
 
       if (bannerImage) {
@@ -748,6 +749,7 @@ class MiddlemanCardGenerator {
           ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
         }
       }
+
       const panelRect = { x: 48, y: 88, width: CARD_WIDTH - 96, height: CARD_HEIGHT - 136 };
       const accentStroke = withAlpha(paletteOverrides.accent, 0.32);
 
@@ -813,6 +815,7 @@ class MiddlemanCardGenerator {
         avatarSource = createAvatarFallback(resolveInitials(initialsSource));
       }
 
+
       const shouldOverrideBorder = Boolean(
         accentOverride && config.avatarBorderColor === DEFAULT_MIDDLEMAN_CARD_CONFIG.avatarBorderColor,
       );
@@ -822,6 +825,7 @@ class MiddlemanCardGenerator {
       const avatarBorderColor = shouldOverrideBorder && accentOverride ? accentOverride : config.avatarBorderColor;
       const avatarGlow = shouldOverrideGlow && accentOverride ? withAlpha(accentOverride, 0.6) : config.avatarGlow;
 
+
       drawAvatar(
         ctx,
         avatarSource,
@@ -829,8 +833,10 @@ class MiddlemanCardGenerator {
         132,
         AVATAR_SIZE,
         config.avatarStyle,
+<
         avatarBorderColor,
         avatarGlow,
+
       );
 
       const infoX = 82 + AVATAR_SIZE + 48;

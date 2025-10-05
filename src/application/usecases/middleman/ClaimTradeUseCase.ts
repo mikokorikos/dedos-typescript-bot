@@ -66,6 +66,7 @@ export class ClaimTradeUseCase {
 
     const middlemanMention = `<@${payload.middlemanId}>`;
     const middlemanMember = await channel.guild.members.fetch(payload.middlemanId).catch(() => null);
+
     const baseUser = middlemanMember?.user ?? (await channel.client.users.fetch(payload.middlemanId).catch(() => null));
     const needsProfileRefresh =
       baseUser !== null && (baseUser.banner === undefined || baseUser.accentColor === undefined);
@@ -96,12 +97,15 @@ export class ClaimTradeUseCase {
         ? (enrichedUser.hexAccentColor as string | null)
         : null;
 
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: middlemanAvatarUrl,
+
       discordBannerUrl: middlemanBannerUrl,
       accentColor: accentHex,
+
       profile,
       highlight: 'Disponible para asistencia',
     });

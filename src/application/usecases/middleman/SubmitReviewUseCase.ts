@@ -112,6 +112,7 @@ export class SubmitReviewUseCase {
         : `#${payload.middlemanAccentColor.toUpperCase()}`
       : null;
 
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
       discordTag: middlemanMention,
       discordDisplayName: middlemanDisplayName,
