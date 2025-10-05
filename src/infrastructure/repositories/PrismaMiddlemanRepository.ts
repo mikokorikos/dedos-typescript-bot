@@ -2,20 +2,20 @@
 // RUTA: src/infrastructure/repositories/PrismaMiddlemanRepository.ts
 // ============================================================================
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 
 import type {
   IMiddlemanRepository,
   MiddlemanClaim,
   MiddlemanProfile,
 } from '@/domain/repositories/IMiddlemanRepository';
+import type { TransactionContext } from '@/domain/repositories/transaction';
 import type { MiddlemanCardConfig } from '@/domain/value-objects/MiddlemanCardConfig';
 import {
   DEFAULT_MIDDLEMAN_CARD_CONFIG,
   parseMiddlemanCardConfig,
   serializeMiddlemanCardConfig,
 } from '@/domain/value-objects/MiddlemanCardConfig';
-import type { TransactionContext } from '@/domain/repositories/transaction';
 import { ensureUsersExist } from '@/infrastructure/repositories/utils/ensureUsersExist';
 
 type PrismaClientLike = PrismaClient | Prisma.TransactionClient;
@@ -151,7 +151,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       data.cardConfig === undefined
         ? undefined
         : data.cardConfig === null
-          ? null
+          ? Prisma.DbNull
           : (serializeMiddlemanCardConfig(data.cardConfig) as Prisma.JsonObject);
 
     if (!middleman) {
@@ -218,7 +218,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       if (cardConfigPayload !== undefined) {
         await prisma.middleman.update({
           where: { userId: data.userId },
-          data: { cardConfig: cardConfigPayload },
+          data: { cardConfig: cardConfigPayload ?? Prisma.DbNull },
         });
       }
       return;
@@ -236,7 +236,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     if (cardConfigPayload !== undefined) {
       await prisma.middleman.update({
         where: { userId: data.userId },
-        data: { cardConfig: cardConfigPayload },
+        data: { cardConfig: cardConfigPayload ?? Prisma.DbNull },
       });
     }
   }
@@ -370,7 +370,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
     try {
       const normalized = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return parseMiddlemanCardConfig(normalized ?? {});
-    } catch (_error) {
+    } catch {
       return DEFAULT_MIDDLEMAN_CARD_CONFIG;
     }
   }
@@ -403,6 +403,7 @@ export class PrismaMiddlemanRepository implements IMiddlemanRepository {
       vouches: Number(row.vouches_count ?? 0),
       ratingSum: Number(row.rating_sum ?? 0),
       ratingCount: Number(row.rating_count ?? 0),
+      cardConfig: DEFAULT_MIDDLEMAN_CARD_CONFIG,
     };
   }
 }

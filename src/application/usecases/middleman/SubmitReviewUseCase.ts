@@ -39,7 +39,7 @@ export class SubmitReviewUseCase {
     }
 
     if (!ticket.isClosed()) {
-      throw new ValidationFailedError({ ticketId: 'El ticket debe estar cerrado antes de enviar una reseÃ±a.' });
+      throw new ValidationFailedError({ ticketId: 'El ticket debe estar cerrado antes de enviar una reseña.' });
     }
 
     const reviewerId = BigInt(payload.reviewerId);
@@ -93,12 +93,25 @@ export class SubmitReviewUseCase {
       this.reviewRepo.calculateAverageRating(middlemanId),
       this.middlemanRepo.getProfile(middlemanId),
     ]);
+    const ratingValue = review.rating.getValue();
+    const totalReviews = profile?.ratingCount ?? 0;
+    const totalVouches = profile?.vouches ?? 0;
+    const middlemanMention = `<@${payload.middlemanId}>`;
+    let middlemanDisplayName = payload.middlemanDisplayName ?? null;
+
+    if (!middlemanDisplayName) {
+      const guildMember = await reviewsChannel.guild.members
+        .fetch(payload.middlemanId)
+        .catch(() => null);
+      middlemanDisplayName = guildMember?.displayName ?? guildMember?.user.username ?? null;
+    }
+
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({
-      discordTag: `<@${payload.middlemanId}>`,
-      discordDisplayName: payload.middlemanDisplayName,
+      discordTag: middlemanMention,
+      discordDisplayName: middlemanDisplayName,
       discordAvatarUrl: payload.middlemanAvatarUrl,
       profile,
-      highlight: 'Nuevo feedback registrado',
+      highlight: `Nueva reseña: ${ratingValue.toFixed(1)} ⭐`,
     });
 
     const mentionTargets = new Set<string>([payload.middlemanId, payload.reviewerId]);
@@ -112,13 +125,16 @@ export class SubmitReviewUseCase {
         embeds: [
           this.embeds.reviewPublished({
             ticketId: ticket.id,
-            middlemanTag: `<@${payload.middlemanId}>`,
+            middlemanTag: middlemanMention,
+            middlemanDisplayName,
             reviewerTag: `<@${payload.reviewerId}>`,
-            rating: review.rating.getValue(),
+            rating: ratingValue,
             comment: trimmedComment,
             averageRating,
             ownerTag,
             partnerTag: partnerTag ?? undefined,
+            vouches: totalVouches,
+            reviewsCount: totalReviews,
           }),
         ],
         files: cardAttachment ? [cardAttachment] : [],
@@ -130,9 +146,9 @@ export class SubmitReviewUseCase {
         ticketId: ticket.id,
         reviewerId: payload.reviewerId,
         middlemanId: payload.middlemanId,
-        rating: review.rating.getValue(),
+        rating: ratingValue,
       },
-      'ReseÃ±a registrada exitosamente.',
+      'Reseña registrada exitosamente.',
     );
   }
 }

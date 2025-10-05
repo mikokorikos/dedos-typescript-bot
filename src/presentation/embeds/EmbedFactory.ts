@@ -2,7 +2,7 @@
 // RUTA: src/presentation/embeds/EmbedFactory.ts
 // ============================================================================
 
-import { type APIEmbedField,EmbedBuilder } from 'discord.js';
+import { type APIEmbedField, EmbedBuilder } from 'discord.js';
 
 import { COLORS, EMBED_LIMITS } from '@/shared/config/constants';
 import { applyDedosBrand } from '@/shared/utils/branding';
@@ -40,12 +40,15 @@ interface ReviewRequestData {
 interface ReviewPublishedData {
   readonly ticketId: number;
   readonly middlemanTag: string;
+  readonly middlemanDisplayName?: string | null;
   readonly reviewerTag: string;
   readonly rating: number;
   readonly comment: string | null;
   readonly averageRating: number;
   readonly ownerTag?: string;
   readonly partnerTag?: string;
+  readonly vouches?: number;
+  readonly reviewsCount?: number;
 }
 
 interface StatsEmbedData {
@@ -151,40 +154,86 @@ export class EmbedFactory {
     });
   }
 
+
   public reviewPublished(data: ReviewPublishedData): EmbedBuilder {
-    const fullStars = 'â­'.repeat(data.rating);
-    const emptyStars = 'â˜†'.repeat(Math.max(0, 5 - data.rating));
+    const ratingValue = Math.max(0, Math.min(5, data.rating));
+    const roundedStars = Math.round(ratingValue);
+    const ratingStars = `${'★'.repeat(roundedStars)}${'☆'.repeat(5 - roundedStars)}`;
     const formattedAverage = data.averageRating.toFixed(2);
+    const middlemanDisplay = data.middlemanDisplayName
+      ? `${data.middlemanDisplayName} (${data.middlemanTag})`
+      : data.middlemanTag;
+
+    const participantLines = [
+      `• Middleman: ${clampEmbedField(middlemanDisplay)}`,
+      `• Trader 1: ${clampEmbedField(data.ownerTag ?? 'Pendiente')}`,
+    ];
+
+    if (data.partnerTag) {
+      participantLines.push(`• Trader 2: ${clampEmbedField(data.partnerTag)}`);
+    }
 
     const commentBlock = data.comment
-      ? `\n\n${truncateText(data.comment, EMBED_LIMITS.description)}`
-      : '';
+      ? truncateText(data.comment, EMBED_LIMITS.description)
+          .split(/\r?\n/u)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .map((line) => `> ${line}`)
+          .join('\n')
+      : null;
+
+    const fields: APIEmbedField[] = [
+      {
+        name: 'Participantes',
+        value: clampEmbedField(participantLines.join('\n')),
+        inline: false,
+      },
+      {
+        name: 'Ticket',
+        value: clampEmbedField(`#${data.ticketId}`),
+        inline: true,
+      },
+      {
+        name: 'Autor',
+        value: clampEmbedField(data.reviewerTag),
+        inline: true,
+      },
+      {
+        name: 'Promedio actualizado',
+        value: clampEmbedField(`${formattedAverage} ⭐`),
+        inline: true,
+      },
+    ];
+
+    if (typeof data.vouches === 'number') {
+      fields.push({
+        name: 'Vouches',
+        value: clampEmbedField(data.vouches.toLocaleString('es-MX')),
+        inline: true,
+      });
+    }
+
+    if (typeof data.reviewsCount === 'number') {
+      fields.push({
+        name: 'Reseñas acumuladas',
+        value: clampEmbedField(`${data.reviewsCount}`),
+        inline: true,
+      });
+    }
+
+    const descriptionParts = [`${ratingStars} (${ratingValue.toFixed(2)} / 5)`];
+    if (commentBlock) {
+      descriptionParts.push('', commentBlock);
+    }
 
     return this.base({
       color: COLORS.success,
-      title: `Nueva resena para ${data.middlemanTag}`,
-      description: `${fullStars}${emptyStars}${commentBlock}`,
-      fields: [
-        {
-          name: 'Ticket',
-          value: clampEmbedField(`#${data.ticketId}`),
-          inline: true,
-        },
-        {
-          name: 'Autor',
-          value: clampEmbedField(data.reviewerTag),
-          inline: true,
-        },
-        {
-          name: 'Promedio actualizado',
-          value: clampEmbedField(`${formattedAverage} â­`),
-          inline: true,
-        },
-      ],
-      footer: data.comment ? undefined : 'Sin comentarios adicionales.',
+      title: 'Nueva reseña recibida',
+      description: descriptionParts.join('\n'),
+      fields,
+      footer: commentBlock ? undefined : 'Sin comentarios adicionales.',
     });
   }
-
   public finalizationPrompt(data: FinalizationPromptData): EmbedBuilder {
     const description = data.completed
       ? 'Ambos traders confirmaron el intercambio. Un middleman puede cerrar el ticket.'

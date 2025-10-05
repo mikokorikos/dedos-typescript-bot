@@ -1,4 +1,5 @@
 ﻿// ============================================================================
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 // RUTA: src/presentation/commands/middleman/middleman.ts
 
@@ -40,11 +41,7 @@ import {
   buildClaimButtonRow,
   MIDDLEMAN_CLAIM_BUTTON_ID,
 } from '@/presentation/components/buttons/MiddlemanClaimButton';
-import {
-  buildReviewButtonRow,
-  REVIEW_BUTTON_CUSTOM_ID,
-  parseReviewButtonCustomId,
-} from '@/presentation/components/buttons/ReviewButtons';
+import { parseReviewButtonCustomId,REVIEW_BUTTON_CUSTOM_ID } from '@/presentation/components/buttons/ReviewButtons';
 import {
   TRADE_CONFIRM_BUTTON_ID,
   TRADE_DATA_BUTTON_ID,
@@ -53,19 +50,9 @@ import {
 import { MiddlemanModal } from '@/presentation/components/modals/MiddlemanModal';
 import { ReviewModal } from '@/presentation/components/modals/ReviewModal';
 import { TradeModal } from '@/presentation/components/modals/TradeModal';
-import {
-  modalHandlers,
-  registerButtonHandler,
-  registerModalHandler,
-  registerSelectMenuHandler,
-} from '@/presentation/components/registry';
+import { modalHandlers, registerButtonHandler, registerModalHandler } from '@/presentation/components/registry';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import { buildClaimPromptMessage, buildTradeReadyMessage } from '@/presentation/middleman/messages';
-import {
-  buildMiddlemanInfoEmbed,
-  buildMiddlemanPanelMessage,
-  MIDDLEMAN_PANEL_MENU_ID,
-} from '@/presentation/middleman/MiddlemanPanelBuilder';
 import { TradePanelRenderer } from '@/presentation/middleman/TradePanelRenderer';
 import { env } from '@/shared/config/env';
 import { mapErrorToDiscordResponse } from '@/shared/errors/discord-error-mapper';
@@ -143,6 +130,30 @@ const requestClosureUseCase = new RequestTradeClosureUseCase(
 );
 
 const tradePanelRenderer = new TradePanelRenderer(ticketRepo, tradeRepo, logger, embedFactory);
+
+const middlemanSlashCommand = new SlashCommandBuilder()
+  .setName('middleman')
+  .setDescription('Accede a las herramientas del sistema de middleman')
+  .setDMPermission(false);
+
+export const middlemanCommand: Command = {
+  data: middlemanSlashCommand,
+  category: 'Middleman',
+  async execute(interaction) {
+    await interaction.reply(
+      brandReplyOptions({
+        embeds: [
+          embedFactory.info({
+            title: 'Sistema de middleman',
+            description:
+              'Gestiona tus trades desde los botones disponibles en el ticket. Si necesitas soporte adicional, abre un ticket con el staff.',
+          }),
+        ],
+        flags: MessageFlags.Ephemeral,
+      }),
+    );
+  },
+};
 
 type SendableChannel = TextBasedChannel & { send: (...args: unknown[]) => unknown };
 
@@ -463,9 +474,8 @@ registerButtonHandler(REVIEW_BUTTON_CUSTOM_ID, async (interaction) => {
       const middlemanUser = await modalInteraction.client.users
         .fetch(middlemanId)
         .catch(() => null);
-      const middlemanDisplayName = (
-        middlemanUser?.globalName ?? middlemanUser?.username ?? undefined
-      );
+      const middlemanDisplayName =
+        middlemanUser?.globalName ?? middlemanUser?.username ?? `Middleman #${middlemanId}`;
       const middlemanAvatarUrl = middlemanUser?.displayAvatarURL({ extension: 'png', size: 256 }) ?? undefined;
 
       await submitReviewUseCase.execute(
@@ -933,18 +943,10 @@ registerButtonHandler(MIDDLEMAN_CLAIM_BUTTON_ID, async (interaction) => {
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const memberDisplayName =
-      typeof (interaction.member as { displayName?: string })?.displayName === 'string'
-        ? (interaction.member as { displayName: string }).displayName
-        : interaction.user.globalName ?? interaction.user.username;
-    const memberAvatarUrl = interaction.user.displayAvatarURL({ extension: 'png', size: 256 });
-
     await claimUseCase.execute(
       {
         ticketId: ticket.id,
         middlemanId: interaction.user.id,
-        middlemanDisplayName: memberDisplayName,
-        middlemanAvatarUrl: memberAvatarUrl,
       },
       textChannel,
     );

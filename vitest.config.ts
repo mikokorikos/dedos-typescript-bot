@@ -1,7 +1,7 @@
 /* eslint-disable import/no-default-export */
 import path from 'node:path';
 
-import { defineConfig } from 'vitest/config';
+import { configDefaults, defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
@@ -11,7 +11,8 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'lcov'],
     },
-    setupFiles: ['tests/setup-env.ts'],
+    setupFiles: ['tests/setup-env.ts', 'tests/setup-mocks.ts'],
+    exclude: [...configDefaults.exclude, 'simulation/**/*.test.ts'],
   },
   resolve: {
     alias: {

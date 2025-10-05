@@ -7,7 +7,12 @@ const REVIEW_BUTTON_VERSION = 'v1';
 const encodeTicketId = (ticketId: number): string => ticketId.toString(36);
 
 export const buildReviewButtonCustomId = (payload: { ticketId: number; middlemanId: string }): string =>
-  ${REVIEW_BUTTON_PREFIX}:::;
+  [
+    REVIEW_BUTTON_PREFIX,
+    REVIEW_BUTTON_VERSION,
+    encodeTicketId(payload.ticketId),
+    payload.middlemanId,
+  ].join(':');
 
 export const parseReviewButtonCustomId = (
   customId: string,
@@ -21,7 +26,12 @@ export const parseReviewButtonCustomId = (
     return null;
   }
 
-  const [, version, ticketFragment, middlemanId] = segments;
+  const [, version, ticketFragment, middlemanId] = segments as [
+    string,
+    string,
+    string,
+    string,
+  ];
   if (version !== REVIEW_BUTTON_VERSION || ticketFragment.length === 0) {
     return null;
   }
