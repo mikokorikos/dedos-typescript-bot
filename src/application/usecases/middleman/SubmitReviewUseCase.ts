@@ -2,7 +2,7 @@
 // RUTA: src/application/usecases/middleman/SubmitReviewUseCase.ts
 // ============================================================================
 
-import type { TextChannel } from 'discord.js';
+import type { TextChannel, User } from 'discord.js';
 import type { Logger } from 'pino';
 
 import { type SubmitReviewDTO, SubmitReviewSchema } from '@/application/dto/review.dto';
@@ -99,7 +99,7 @@ export class SubmitReviewUseCase {
     const middlemanMention = `<@${payload.middlemanId}>`;
     let middlemanDisplayName = payload.middlemanDisplayName ?? null;
 
-    let middlemanUser = null;
+    let middlemanUser: User | null = null;
     if (!middlemanDisplayName) {
       const guildMember = await reviewsChannel.guild.members
         .fetch(payload.middlemanId)
