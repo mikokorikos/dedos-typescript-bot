@@ -848,13 +848,13 @@ describe('Simulación integral del bot', () => {
     const fakeLogger = new FakeLogger();
 
     vi.spyOn(middlemanCardGenerator, 'renderTradeSummaryCard').mockResolvedValue(
-      createMockAttachment('trade-card.png'),
+      createMockAttachment('trade-card.gif'),
     );
     vi.spyOn(middlemanCardGenerator, 'renderProfileCard').mockResolvedValue(
-      createMockAttachment('profile-card.png'),
+      createMockAttachment('profile-card.gif'),
     );
     vi.spyOn(middlemanCardGenerator, 'renderStatsCard').mockResolvedValue(
-      createMockAttachment('stats-card.png'),
+      createMockAttachment('stats-card.gif'),
     );
     vi.spyOn(memberCardGenerator, 'render').mockResolvedValue(createMockAttachment('member-card.png'));
 

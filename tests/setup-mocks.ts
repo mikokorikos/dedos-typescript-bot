@@ -1,3 +1,5 @@
+import { Readable } from 'node:stream';
+
 import { vi } from 'vitest';
 
 class MockCanvasContext {
@@ -27,6 +29,14 @@ class MockCanvasContext {
   public scale(_x: number, _y: number): void {}
   public translate(_x: number, _y: number): void {}
   public rotate(_angle: number): void {}
+  public setTransform(
+    _a: number,
+    _b: number,
+    _c: number,
+    _d: number,
+    _e: number,
+    _f: number,
+  ): void {}
   public beginPath(): void {}
   public closePath(): void {}
   public moveTo(_x: number, _y: number): void {}
@@ -100,4 +110,38 @@ class MockCanvas {
 vi.mock('@napi-rs/canvas', () => ({
   createCanvas: (width: number, height: number) => new MockCanvas(width, height),
   loadImage: async () => ({ width: 1, height: 1 }),
+}));
+
+vi.mock('gifencoder', () => {
+  class MockGifEncoder {
+    private readonly stream = new Readable({ read() {} });
+
+    public start(): void {}
+
+    public setRepeat(_value: number): void {}
+
+    public setQuality(_value: number): void {}
+
+    public setDelay(_value: number): void {}
+
+    public addFrame(_ctx: unknown): void {}
+
+    public createReadStream(): Readable {
+      return this.stream;
+    }
+
+    public finish(): void {
+      this.stream.push(Buffer.from('gif'));
+      this.stream.push(null);
+    }
+  }
+
+  return { default: MockGifEncoder };
+});
+
+vi.mock('gifuct-js', () => ({
+  parseGIF: () => ({
+    lsd: { width: 1, height: 1 },
+  }),
+  decompressFrames: () => [],
 }));
