@@ -45,6 +45,12 @@ declare module '@napi-rs/canvas' {
 
   export type CanvasPattern = unknown;
 
+  export interface ImageData {
+    readonly data: Uint8ClampedArray;
+    readonly width: number;
+    readonly height: number;
+  }
+
   export interface CanvasGradient {
     addColorStop(offset: number, color: string): void;
   }
@@ -74,6 +80,8 @@ declare module '@napi-rs/canvas' {
     arc(x: number, y: number, radius: number, startAngle: number, endAngle: number, counterclockwise?: boolean): void;
     fillRect(x: number, y: number, width: number, height: number): void;
     clearRect(x: number, y: number, width: number, height: number): void;
+    setTransform(a: number, b: number, c: number, d: number, e: number, f: number): void;
+    resetTransform(): void;
     stroke(): void;
     fill(): void;
     clip(): void;
@@ -92,6 +100,8 @@ declare module '@napi-rs/canvas' {
     ): void;
     fillText(text: string, x: number, y: number, maxWidth?: number): void;
     measureText(text: string): { width: number };
+    createImageData(width: number, height: number): ImageData;
+    putImageData(data: ImageData, dx: number, dy: number): void;
   }
 
   export interface Canvas {
