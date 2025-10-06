@@ -85,7 +85,7 @@ interface ImageCacheEntry {
 }
 
 interface GifFrameData {
-  readonly image: CanvasImageSource;
+  readonly image: CanvasImageSource | null;
   readonly delay: number;
 }
 
@@ -979,16 +979,10 @@ class MiddlemanCardGenerator {
     });
 
     const gifCacheKey = `${baseCacheKey}:gif`;
-    const pngCacheKey = `${baseCacheKey}:png`;
 
     const cachedGif = this.getFromCache(gifCacheKey, 'middleman-profile-card.gif');
     if (cachedGif) {
       return cachedGif;
-    }
-
-    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-profile-card.png');
-    if (cachedPng) {
-      return cachedPng;
     }
 
     try {
@@ -1165,14 +1159,15 @@ class MiddlemanCardGenerator {
         return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.gif' });
       }
 
-      const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
-      const ctx = canvas.getContext('2d');
-      ctx.scale(scale, scale);
-      await drawFrame(ctx, null);
-
-      const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(pngCacheKey, buffer);
-      return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.png' });
+      const buffer = await this.renderAnimatedCard({
+        frames: [{ image: null, delay: 200 }],
+        width: Math.round(CARD_WIDTH * scale),
+        height: Math.round(CARD_HEIGHT * scale),
+        scale,
+        draw: drawFrame,
+      });
+      this.storeInCache(gifCacheKey, buffer);
+      return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.gif' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de perfil del middleman.');
       return null;
@@ -1184,16 +1179,10 @@ class MiddlemanCardGenerator {
   ): Promise<AttachmentBuilder | null> {
     const baseCacheKey = createCacheKey('trade-summary', options);
     const gifCacheKey = `${baseCacheKey}:gif`;
-    const pngCacheKey = `${baseCacheKey}:png`;
 
     const cachedGif = this.getFromCache(gifCacheKey, 'middleman-trade-card.gif');
     if (cachedGif) {
       return cachedGif;
-    }
-
-    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-trade-card.png');
-    if (cachedPng) {
-      return cachedPng;
     }
 
     try {
@@ -1319,13 +1308,15 @@ class MiddlemanCardGenerator {
         return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.gif' });
       }
 
-      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
-      const ctx = canvas.getContext('2d');
-      await drawFrame(ctx, null);
-
-      const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(pngCacheKey, buffer);
-      return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.png' });
+      const buffer = await this.renderAnimatedCard({
+        frames: [{ image: null, delay: 200 }],
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        scale: 1,
+        draw: drawFrame,
+      });
+      this.storeInCache(gifCacheKey, buffer);
+      return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.gif' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de resumen de trade.');
       return null;
@@ -1335,16 +1326,10 @@ class MiddlemanCardGenerator {
   public async renderStatsCard(options: StatsCardOptions): Promise<AttachmentBuilder | null> {
     const baseCacheKey = createCacheKey('stats-card', options);
     const gifCacheKey = `${baseCacheKey}:gif`;
-    const pngCacheKey = `${baseCacheKey}:png`;
 
     const cachedGif = this.getFromCache(gifCacheKey, 'dedos-stats-card.gif');
     if (cachedGif) {
       return cachedGif;
-    }
-
-    const cachedPng = this.getFromCache(pngCacheKey, 'dedos-stats-card.png');
-    if (cachedPng) {
-      return cachedPng;
     }
 
     try {
@@ -1428,13 +1413,15 @@ class MiddlemanCardGenerator {
         return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.gif' });
       }
 
-      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
-      const ctx = canvas.getContext('2d');
-      await drawFrame(ctx, null);
-
-      const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(pngCacheKey, buffer);
-      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
+      const buffer = await this.renderAnimatedCard({
+        frames: [{ image: null, delay: 200 }],
+        width: CARD_WIDTH,
+        height: CARD_HEIGHT,
+        scale: 1,
+        draw: drawFrame,
+      });
+      this.storeInCache(gifCacheKey, buffer);
+      return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.gif' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadísticas.');
       return null;
