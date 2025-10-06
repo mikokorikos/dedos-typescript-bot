@@ -2,7 +2,7 @@
 // RUTA: src/application/usecases/middleman/SubmitReviewUseCase.ts
 // ============================================================================
 
-import type { TextChannel } from 'discord.js';
+import type { TextChannel, User } from 'discord.js';
 import type { Logger } from 'pino';
 
 import { type SubmitReviewDTO, SubmitReviewSchema } from '@/application/dto/review.dto';
@@ -13,6 +13,7 @@ import { Rating } from '@/domain/value-objects/Rating';
 import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import type { EmbedFactory } from '@/presentation/embeds/EmbedFactory';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
+import { resolveUserBannerUrl } from '@/shared/discord/resolveUserBannerUrl';
 import {
   DuplicateReviewError,
   TicketNotFoundError,
@@ -99,7 +100,7 @@ export class SubmitReviewUseCase {
     const middlemanMention = `<@${payload.middlemanId}>`;
     let middlemanDisplayName = payload.middlemanDisplayName ?? null;
 
-    let middlemanUser = null;
+    let middlemanUser: User | null = null;
     if (!middlemanDisplayName) {
       const guildMember = await reviewsChannel.guild.members
         .fetch(payload.middlemanId)
@@ -117,12 +118,7 @@ export class SubmitReviewUseCase {
     ) {
       middlemanUser = await middlemanUser.fetch().catch(() => middlemanUser);
     }
-    const middlemanBannerUrl =
-      middlemanUser && typeof middlemanUser.bannerURL === 'function'
-        ? middlemanUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
-          middlemanUser.bannerURL({ size: 2048, forceStatic: false }) ??
-          undefined
-        : undefined;
+    const middlemanBannerUrl = resolveUserBannerUrl(middlemanUser) ?? undefined;
 
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({

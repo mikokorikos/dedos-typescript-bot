@@ -20,6 +20,7 @@ import { PrismaMiddlemanRepository } from '@/infrastructure/repositories/PrismaM
 import type { Command } from '@/presentation/commands/types';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
 import { env } from '@/shared/config/env';
+import { resolveUserBannerUrl } from '@/shared/discord/resolveUserBannerUrl';
 import { mapErrorToDiscordResponse } from '@/shared/errors/discord-error-mapper';
 import { UnauthorizedActionError } from '@/shared/errors/domain.errors';
 import { logger } from '@/shared/logger/pino';
@@ -284,12 +285,7 @@ const handleStats = async (interaction: ChatInputCommandInteraction): Promise<vo
   const displayName = guildMember?.displayName ?? target.globalName ?? target.username;
   const discordTag = target.tag;
   const avatarUrl = target.displayAvatarURL({ extension: 'png', size: 256 });
-  const bannerUrl =
-    typeof resolvedUser.bannerURL === 'function'
-      ? resolvedUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
-        resolvedUser.bannerURL({ size: 2048, forceStatic: false }) ??
-        undefined
-      : undefined;
+    const bannerUrl = resolveUserBannerUrl(resolvedUser) ?? undefined;
 
   let embed: ReturnType<typeof embedFactory.info>;
   if (profile) {
@@ -638,12 +634,7 @@ const handlePrefixDirectoryStats = async (message: Message, args: ReadonlyArray<
   const displayName = guildMember?.displayName ?? user?.globalName ?? user?.username ?? `<@${targetId}>`;
   const discordTag = user?.tag ?? displayName;
   const avatarUrl = user?.displayAvatarURL({ extension: 'png', size: 256 });
-  const bannerUrl =
-    user && typeof user.bannerURL === 'function'
-      ? user.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
-        user.bannerURL({ size: 2048, forceStatic: false }) ??
-        undefined
-      : undefined;
+    const bannerUrl = resolveUserBannerUrl(user) ?? undefined;
 
   let embed: ReturnType<typeof embedFactory.info>;
   if (profile) {
