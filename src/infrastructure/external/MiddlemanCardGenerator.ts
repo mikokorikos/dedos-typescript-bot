@@ -102,11 +102,6 @@ interface AnimatedBackgroundDescriptor {
 
 const MIN_GIF_DELAY_MS = 20;
 
-const isGifUrl = (url: string): boolean => {
-  const normalized = url.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
-  return normalized.endsWith('.gif');
-};
-
 interface BackgroundLayerOptions {
   readonly frameImage?: CanvasImageSource | null;
   readonly backgroundOverride?: MiddlemanCardBackground | null;
@@ -620,7 +615,7 @@ const drawBannerBackground = async (
 ): Promise<boolean> => {
   const background: MiddlemanCardBackground =
     backgroundOverride ?? {
-      type: isGifUrl(bannerUrl) ? 'gif' : 'image',
+      type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
       url: bannerUrl,
       fit: 'cover',
       position: 'center',
@@ -842,7 +837,7 @@ class MiddlemanCardGenerator {
     config: MiddlemanCardConfig,
     bannerUrl?: string | null,
   ): Promise<AnimatedBackgroundDescriptor | null> {
-    if (bannerUrl && isGifUrl(bannerUrl)) {
+    if (bannerUrl && bannerUrl.toLowerCase().endsWith('.gif')) {
       const frames = await this.loadGifFrames(bannerUrl);
       if (frames && frames.length > 0) {
         return {
