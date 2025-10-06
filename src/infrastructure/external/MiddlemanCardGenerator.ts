@@ -102,11 +102,6 @@ interface AnimatedBackgroundDescriptor {
 
 const MIN_GIF_DELAY_MS = 20;
 
-const isGifUrl = (url: string): boolean => {
-  const normalized = url.split(/[?#]/, 1)[0]?.toLowerCase() ?? '';
-  return normalized.endsWith('.gif');
-};
-
 interface BackgroundLayerOptions {
   readonly frameImage?: CanvasImageSource | null;
   readonly backgroundOverride?: MiddlemanCardBackground | null;
@@ -620,7 +615,7 @@ const drawBannerBackground = async (
 ): Promise<boolean> => {
   const background: MiddlemanCardBackground =
     backgroundOverride ?? {
-      type: isGifUrl(bannerUrl) ? 'gif' : 'image',
+      type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
       url: bannerUrl,
       fit: 'cover',
       position: 'center',
@@ -842,7 +837,7 @@ class MiddlemanCardGenerator {
     config: MiddlemanCardConfig,
     bannerUrl?: string | null,
   ): Promise<AnimatedBackgroundDescriptor | null> {
-    if (bannerUrl && isGifUrl(bannerUrl)) {
+    if (bannerUrl && bannerUrl.toLowerCase().endsWith('.gif')) {
       const frames = await this.loadGifFrames(bannerUrl);
       if (frames && frames.length > 0) {
         return {
@@ -861,13 +856,12 @@ class MiddlemanCardGenerator {
       }
     }
 
-    const background = config.background;
-    if (background && isGifUrl(background.url)) {
-      const frames = await this.loadGifFrames(background.url);
+    if (config.background?.type === 'gif') {
+      const frames = await this.loadGifFrames(config.background.url);
       if (frames && frames.length > 0) {
         return {
           frames,
-          background: { ...background, type: 'gif' },
+          background: config.background,
           isBanner: false,
         } satisfies AnimatedBackgroundDescriptor;
       }
@@ -992,14 +986,7 @@ class MiddlemanCardGenerator {
       return cachedGif;
     }
 
-    const hasAnimatedCandidate = Boolean(
-      (options.discordBannerUrl && isGifUrl(options.discordBannerUrl)) ||
-        config.background?.type === 'gif',
-    );
-
-    let cachedPng = hasAnimatedCandidate
-      ? null
-      : this.getFromCache(pngCacheKey, 'middleman-profile-card.png');
+    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-profile-card.png');
     if (cachedPng) {
       return cachedPng;
     }
@@ -1053,9 +1040,7 @@ class MiddlemanCardGenerator {
       const chipY = starsY + 90;
       const highlightText = options.highlight ?? config.highlight ?? null;
       const vouches = profile?.vouches ?? 0;
-      const animatedBackground = hasAnimatedCandidate
-        ? await this.resolveAnimatedBackground(config, options.discordBannerUrl ?? null)
-        : null;
+      const animatedBackground = await this.resolveAnimatedBackground(config, options.discordBannerUrl ?? null);
 
       const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
         ctx.textBaseline = 'top';
@@ -1180,13 +1165,6 @@ class MiddlemanCardGenerator {
         return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.gif' });
       }
 
-      if (!cachedPng) {
-        cachedPng = this.getFromCache(pngCacheKey, 'middleman-profile-card.png');
-        if (cachedPng) {
-          return cachedPng;
-        }
-      }
-
       const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
       const ctx = canvas.getContext('2d');
       ctx.scale(scale, scale);
@@ -1204,7 +1182,6 @@ class MiddlemanCardGenerator {
   public async renderTradeSummaryCard(
     options: TradeSummaryCardOptions,
   ): Promise<AttachmentBuilder | null> {
-    const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
     const baseCacheKey = createCacheKey('trade-summary', options);
     const gifCacheKey = `${baseCacheKey}:gif`;
     const pngCacheKey = `${baseCacheKey}:png`;
@@ -1214,19 +1191,14 @@ class MiddlemanCardGenerator {
       return cachedGif;
     }
 
-    const hasAnimatedCandidate = config.background?.type === 'gif';
-
-    let cachedPng = hasAnimatedCandidate
-      ? null
-      : this.getFromCache(pngCacheKey, 'middleman-trade-card.png');
+    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-trade-card.png');
     if (cachedPng) {
       return cachedPng;
     }
 
     try {
-      const animatedBackground = hasAnimatedCandidate
-        ? await this.resolveAnimatedBackground(config, null)
-        : null;
+      const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
+      const animatedBackground = await this.resolveAnimatedBackground(config, null);
 
       const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
         ctx.textBaseline = 'top';
@@ -1347,13 +1319,6 @@ class MiddlemanCardGenerator {
         return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.gif' });
       }
 
-      if (!cachedPng) {
-        cachedPng = this.getFromCache(pngCacheKey, 'middleman-trade-card.png');
-        if (cachedPng) {
-          return cachedPng;
-        }
-      }
-
       const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
       const ctx = canvas.getContext('2d');
       await drawFrame(ctx, null);
@@ -1368,7 +1333,6 @@ class MiddlemanCardGenerator {
   }
 
   public async renderStatsCard(options: StatsCardOptions): Promise<AttachmentBuilder | null> {
-    const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
     const baseCacheKey = createCacheKey('stats-card', options);
     const gifCacheKey = `${baseCacheKey}:gif`;
     const pngCacheKey = `${baseCacheKey}:png`;
@@ -1378,19 +1342,14 @@ class MiddlemanCardGenerator {
       return cachedGif;
     }
 
-    const hasAnimatedCandidate = config.background?.type === 'gif';
-
-    let cachedPng = hasAnimatedCandidate
-      ? null
-      : this.getFromCache(pngCacheKey, 'dedos-stats-card.png');
+    const cachedPng = this.getFromCache(pngCacheKey, 'dedos-stats-card.png');
     if (cachedPng) {
       return cachedPng;
     }
 
     try {
-      const animatedBackground = hasAnimatedCandidate
-        ? await this.resolveAnimatedBackground(config, null)
-        : null;
+      const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
+      const animatedBackground = await this.resolveAnimatedBackground(config, null);
 
       const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
         ctx.textBaseline = 'top';
@@ -1467,13 +1426,6 @@ class MiddlemanCardGenerator {
         });
         this.storeInCache(gifCacheKey, buffer);
         return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.gif' });
-      }
-
-      if (!cachedPng) {
-        cachedPng = this.getFromCache(pngCacheKey, 'dedos-stats-card.png');
-        if (cachedPng) {
-          return cachedPng;
-        }
       }
 
       const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
