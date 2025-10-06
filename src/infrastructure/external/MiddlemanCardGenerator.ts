@@ -5,9 +5,9 @@
 import { createHash } from 'node:crypto';
 
 import { createCanvas, loadImage, type SKRSContext2D } from '@napi-rs/canvas';
+import { AttachmentBuilder } from 'discord.js';
 import GIFEncoder from 'gifencoder';
 import { decompressFrames, parseGIF } from 'gifuct-js';
-import { AttachmentBuilder } from 'discord.js';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
 import type {
@@ -956,7 +956,7 @@ class MiddlemanCardGenerator {
       ctx.setTransform(scale, 0, 0, scale, 0, 0);
       await draw(ctx, frame.image);
       encoder.setDelay(Math.max(frame.delay, MIN_GIF_DELAY_MS));
-      encoder.addFrame(ctx as unknown as any);
+      encoder.addFrame(ctx);
     }
 
     encoder.finish();
