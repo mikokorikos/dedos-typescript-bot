@@ -5,6 +5,8 @@
 import { createHash } from 'node:crypto';
 
 import { createCanvas, loadImage, type SKRSContext2D } from '@napi-rs/canvas';
+import GIFEncoder from 'gifencoder';
+import { decompressFrames, parseGIF } from 'gifuct-js';
 import { AttachmentBuilder } from 'discord.js';
 
 import type { MiddlemanProfile } from '@/domain/repositories/IMiddlemanRepository';
@@ -80,6 +82,30 @@ interface CacheEntry {
 interface ImageCacheEntry {
   readonly image: CanvasImageSource;
   readonly expiresAt: number;
+}
+
+interface GifFrameData {
+  readonly image: CanvasImageSource;
+  readonly delay: number;
+}
+
+interface GifCacheEntry {
+  readonly frames: readonly GifFrameData[];
+  readonly expiresAt: number;
+}
+
+interface AnimatedBackgroundDescriptor {
+  readonly frames: readonly GifFrameData[];
+  readonly background: MiddlemanCardBackground;
+  readonly isBanner: boolean;
+}
+
+const MIN_GIF_DELAY_MS = 20;
+
+interface BackgroundLayerOptions {
+  readonly frameImage?: CanvasImageSource | null;
+  readonly backgroundOverride?: MiddlemanCardBackground | null;
+  readonly isBanner?: boolean;
 }
 
 const formatNumber = (value: number): string => {
@@ -523,13 +549,40 @@ const getImageMetrics = (
   return null;
 };
 
+const applyGifPatch = (
+  target: Uint8ClampedArray,
+  patch: Uint8ClampedArray,
+  dims: { left: number; top: number; width: number; height: number },
+  canvasWidth: number,
+): void => {
+  const { left, top, width, height } = dims;
+  for (let row = 0; row < height; row += 1) {
+    const targetIndex = ((top + row) * canvasWidth + left) * 4;
+    const patchIndex = row * width * 4;
+    target.set(patch.subarray(patchIndex, patchIndex + width * 4), targetIndex);
+  }
+};
+
+const clearGifRegion = (
+  target: Uint8ClampedArray,
+  dims: { left: number; top: number; width: number; height: number },
+  canvasWidth: number,
+): void => {
+  const { left, top, width, height } = dims;
+  for (let row = 0; row < height; row += 1) {
+    const start = ((top + row) * canvasWidth + left) * 4;
+    target.fill(0, start, start + width * 4);
+  }
+};
+
 const drawBackgroundMedia = async (
   ctx: SKRSContext2D,
   background: MiddlemanCardBackground,
   imageCache: Map<string, ImageCacheEntry>,
+  overrideImage?: CanvasImageSource | null,
 ): Promise<boolean> => {
   const cacheKey = `bg:${background.url}`;
-  const image = await loadRemoteImage(background.url, imageCache, cacheKey);
+  const image = overrideImage ?? (await loadRemoteImage(background.url, imageCache, cacheKey));
   if (!image) {
     return false;
   }
@@ -557,18 +610,21 @@ const drawBannerBackground = async (
   ctx: SKRSContext2D,
   bannerUrl: string,
   imageCache: Map<string, ImageCacheEntry>,
+  frameImage?: CanvasImageSource | null,
+  backgroundOverride?: MiddlemanCardBackground,
 ): Promise<boolean> => {
-  const background: MiddlemanCardBackground = {
-    type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
-    url: bannerUrl,
-    fit: 'cover',
-    position: 'center',
-    opacity: 0.9,
-    blur: 0,
-    saturate: 1,
-  };
+  const background: MiddlemanCardBackground =
+    backgroundOverride ?? {
+      type: bannerUrl.toLowerCase().endsWith('.gif') ? 'gif' : 'image',
+      url: bannerUrl,
+      fit: 'cover',
+      position: 'center',
+      opacity: 0.9,
+      blur: 0,
+      saturate: 1,
+    };
 
-  const rendered = await drawBackgroundMedia(ctx, background, imageCache);
+  const rendered = await drawBackgroundMedia(ctx, background, imageCache, frameImage ?? undefined);
   if (!rendered) {
     return false;
   }
@@ -617,6 +673,7 @@ const drawBackgroundLayer = async (
   config: MiddlemanCardConfig,
   imageCache: Map<string, ImageCacheEntry>,
   bannerUrl?: string | null,
+  options?: BackgroundLayerOptions,
 ): Promise<void> => {
   const gradient = ctx.createLinearGradient(0, 0, CARD_WIDTH, CARD_HEIGHT);
   gradient.addColorStop(0, config.gradientStart);
@@ -624,11 +681,29 @@ const drawBackgroundLayer = async (
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
 
-  const hasBanner = bannerUrl ? await drawBannerBackground(ctx, bannerUrl, imageCache) : false;
-  const hasMedia =
-    hasBanner || !config.background
-      ? hasBanner
-      : await drawBackgroundMedia(ctx, config.background, imageCache);
+  let hasMedia = false;
+  if (options?.frameImage && options.backgroundOverride) {
+    hasMedia = options.isBanner
+      ? await drawBannerBackground(
+          ctx,
+          options.backgroundOverride.url,
+          imageCache,
+          options.frameImage,
+          options.backgroundOverride,
+        )
+      : await drawBackgroundMedia(
+          ctx,
+          options.backgroundOverride,
+          imageCache,
+          options.frameImage,
+        );
+  } else {
+    const hasBanner = bannerUrl ? await drawBannerBackground(ctx, bannerUrl, imageCache) : false;
+    hasMedia =
+      hasBanner || !config.background
+        ? hasBanner
+        : await drawBackgroundMedia(ctx, config.background, imageCache);
+  }
   if (!hasMedia) {
     drawPattern(ctx, config.pattern, config.accent, CARD_WIDTH, CARD_HEIGHT);
   }
@@ -739,6 +814,8 @@ class MiddlemanCardGenerator {
 
   private readonly imageCache = new Map<string, ImageCacheEntry>();
 
+  private readonly gifCache = new Map<string, GifCacheEntry>();
+
   private getFromCache(name: string, attachmentName: string): AttachmentBuilder | null {
     const entry = this.cache.get(name);
     if (entry && entry.expiresAt > Date.now()) {
@@ -756,12 +833,142 @@ class MiddlemanCardGenerator {
     this.cache.set(name, { buffer, expiresAt: Date.now() + CACHE_TTL_MS });
   }
 
+  private async resolveAnimatedBackground(
+    config: MiddlemanCardConfig,
+    bannerUrl?: string | null,
+  ): Promise<AnimatedBackgroundDescriptor | null> {
+    if (bannerUrl && bannerUrl.toLowerCase().endsWith('.gif')) {
+      const frames = await this.loadGifFrames(bannerUrl);
+      if (frames && frames.length > 0) {
+        return {
+          frames,
+          background: {
+            type: 'gif',
+            url: bannerUrl,
+            fit: 'cover',
+            position: 'center',
+            opacity: 0.9,
+            blur: 0,
+            saturate: 1,
+          },
+          isBanner: true,
+        } satisfies AnimatedBackgroundDescriptor;
+      }
+    }
+
+    if (config.background?.type === 'gif') {
+      const frames = await this.loadGifFrames(config.background.url);
+      if (frames && frames.length > 0) {
+        return {
+          frames,
+          background: config.background,
+          isBanner: false,
+        } satisfies AnimatedBackgroundDescriptor;
+      }
+    }
+
+    return null;
+  }
+
+  private async loadGifFrames(url: string): Promise<readonly GifFrameData[] | null> {
+    const now = Date.now();
+    const cached = this.gifCache.get(url);
+    if (cached && cached.expiresAt > now) {
+      return cached.frames;
+    }
+
+    try {
+      const buffer = await fetchImageBuffer(url);
+      const parsed = parseGIF(buffer);
+      const rawFrames = decompressFrames(parsed, true);
+      if (rawFrames.length === 0) {
+        return null;
+      }
+
+      const width = parsed.lsd.width;
+      const height = parsed.lsd.height;
+      const composite = new Uint8ClampedArray(width * height * 4);
+      const frames: GifFrameData[] = [];
+
+      for (const frame of rawFrames) {
+        const dims = frame.dims;
+        const restore = frame.disposalType === 3 ? composite.slice() : null;
+
+        applyGifPatch(composite, frame.patch, dims, width);
+
+        const canvas = createCanvas(width, height);
+        const ctx = canvas.getContext('2d');
+        const imageData = ctx.createImageData(width, height);
+        imageData.data.set(composite);
+        ctx.putImageData(imageData, 0, 0);
+
+        const delay = Math.max(frame.delay ?? 10, 2) * 10;
+        frames.push({ image: canvas, delay });
+
+        if (frame.disposalType === 2) {
+          clearGifRegion(composite, dims, width);
+        } else if (frame.disposalType === 3 && restore) {
+          composite.set(restore);
+        }
+      }
+
+      if (frames.length === 0) {
+        return null;
+      }
+
+      this.gifCache.set(url, { frames, expiresAt: now + CACHE_TTL_MS });
+      return frames;
+    } catch (error) {
+      logger.warn({ err: error, url }, 'No se pudo decodificar el GIF remoto.');
+      return null;
+    }
+  }
+
+  private async renderAnimatedCard(params: {
+    readonly frames: readonly GifFrameData[];
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+    readonly draw: (ctx: SKRSContext2D, frameImage: CanvasImageSource | null) => Promise<void>;
+  }): Promise<Buffer> {
+    const { frames, width, height, scale, draw } = params;
+    const encoder = new GIFEncoder(width, height);
+    encoder.start();
+    encoder.setRepeat(0);
+    encoder.setQuality(10);
+
+    const stream = encoder.createReadStream();
+    const chunks: Buffer[] = [];
+    const completion = new Promise<Buffer>((resolve, reject) => {
+      stream.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
+      });
+      stream.once('end', () => resolve(Buffer.concat(chunks)));
+      stream.once('error', reject);
+    });
+
+    const canvas = createCanvas(width, height);
+    const ctx = canvas.getContext('2d');
+
+    for (const frame of frames) {
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, width, height);
+      ctx.setTransform(scale, 0, 0, scale, 0, 0);
+      await draw(ctx, frame.image);
+      encoder.setDelay(Math.max(frame.delay, MIN_GIF_DELAY_MS));
+      encoder.addFrame(ctx as unknown as any);
+    }
+
+    encoder.finish();
+    return completion;
+  }
+
   public async renderProfileCard(options: ProfileCardOptions): Promise<AttachmentBuilder | null> {
     const profile = options.profile;
     const config = profile?.cardConfig ?? DEFAULT_MIDDLEMAN_CARD_CONFIG;
     const scale = LAYOUT_SCALE[config.layout] ?? 1;
     const baseName = options.discordDisplayName?.trim() || options.discordTag.trim();
-    const cacheKey = createCacheKey('profile', {
+    const baseCacheKey = createCacheKey('profile', {
       tag: options.discordTag,
       displayName: baseName,
       avatar: options.discordAvatarUrl ?? null,
@@ -771,36 +978,20 @@ class MiddlemanCardGenerator {
       cardConfig: config,
     });
 
-    const cached = this.getFromCache(cacheKey, 'middleman-profile-card.png');
-    if (cached) {
-      return cached;
+    const gifCacheKey = `${baseCacheKey}:gif`;
+    const pngCacheKey = `${baseCacheKey}:png`;
+
+    const cachedGif = this.getFromCache(gifCacheKey, 'middleman-profile-card.gif');
+    if (cachedGif) {
+      return cachedGif;
+    }
+
+    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-profile-card.png');
+    if (cachedPng) {
+      return cachedPng;
     }
 
     try {
-      const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
-      const ctx = canvas.getContext('2d');
-      ctx.scale(scale, scale);
-      ctx.textBaseline = 'top';
-
-      await drawBackgroundLayer(ctx, config, this.imageCache, options.discordBannerUrl ?? null);
-      if (config.sideMedia) {
-        await drawSideMedia(ctx, config.sideMedia, this.imageCache);
-      }
-
-      const borderColor = addAlphaToHex(config.border.color, config.border.opacity);
-      drawRoundedRect(
-        ctx,
-        48,
-        80,
-        CARD_WIDTH - 96,
-        CARD_HEIGHT - 136,
-        config.frameStyle === 'cut' ? 12 : 34,
-        addAlphaToHex('#070916', 0.76),
-        borderColor,
-        config.border.width,
-        config.border.glow ? { color: addAlphaToHex(config.border.color, 0.35), blur: 24 } : undefined,
-      );
-
       const initialsSource = profile?.primaryIdentity?.username ?? baseName;
       const fallback = createAvatarFallback(resolveInitials(initialsSource), AVATAR_SIZE);
       const discordAvatar =
@@ -811,22 +1002,9 @@ class MiddlemanCardGenerator {
 
       const avatarX = 96;
       const avatarY = 120;
-      drawAvatar(ctx, avatarSource, avatarX, avatarY, AVATAR_SIZE, {
-        borderColor: addAlphaToHex('#FFFFFF', 0.65),
-        borderWidth: 4,
-      });
-
       const infoX = avatarX + AVATAR_SIZE + 48;
       const infoWidth = CARD_WIDTH - infoX - 340;
       const infoY = 128;
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 52px "Segoe UI", sans-serif';
-      ctx.fillText(baseName.slice(0, 42), infoX, infoY);
-
-      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
-      ctx.font = '500 22px "Segoe UI", sans-serif';
-      ctx.fillText(options.discordTag, infoX, infoY + 60);
 
       const robloxUsername = profile?.primaryIdentity?.username ?? 'Sin registrar';
       const robloxAvatarUrl = profile?.primaryIdentity?.robloxUserId
@@ -849,83 +1027,151 @@ class MiddlemanCardGenerator {
       }
       const robloxCircleX = infoX;
       const robloxCircleY = infoY + 100;
-      drawAvatar(
-        ctx,
-        robloxAvatar ?? createAvatarFallback(resolveInitials(robloxUsername), ROBLOX_AVATAR_SIZE),
-        robloxCircleX,
-        robloxCircleY,
-        ROBLOX_AVATAR_SIZE,
-        {
-          borderColor: addAlphaToHex(config.accent, 0.75),
-          borderWidth: 4,
-        },
-      );
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 34px "Segoe UI", sans-serif';
-      ctx.fillText(`Roblox · ${robloxUsername}`, robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 12);
-
-      if (profile?.primaryIdentity?.verified) {
-        ctx.fillStyle = addAlphaToHex('#3ED598', 0.92);
-        ctx.font = '600 18px "Segoe UI", sans-serif';
-        ctx.fillText('Verificado', robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 60);
-      }
-
       const ratingCount = profile?.ratingCount ?? 0;
       const ratingTotal = profile?.ratingSum ?? 0;
       const ratingValue = ratingCount > 0 ? clamp(ratingTotal / ratingCount, 0, 5) : 0;
       const starsX = infoX;
       const starsY = robloxCircleY + ROBLOX_AVATAR_SIZE + 12;
-      drawRatingStars(ctx, ratingValue, starsX, starsY, 96, config.accent, config.starStyle);
-      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.82);
-      ctx.font = '600 22px "Segoe UI", sans-serif';
       const ratingLabel =
         ratingCount > 0
           ? `${ratingValue.toFixed(2)} / 5 (${ratingCount} reseñas)`
           : 'Sin reseñas registradas';
-      ctx.fillText(ratingLabel, starsX + 360, starsY + 12);
-
       let chipX = infoX;
       const chipY = starsY + 90;
-      if (config.chips.length > 0) {
-        for (const chip of config.chips) {
-          const width = drawChip(ctx, chip.label, chip.accent ?? config.accent, chipX, chipY);
-          chipX += width;
-        }
-      }
-
       const highlightText = options.highlight ?? config.highlight ?? null;
-      if (highlightText) {
-        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.7);
-        ctx.font = '500 20px "Segoe UI", sans-serif';
-        const lines = wrapText(ctx, highlightText, infoWidth);
-        lines.forEach((line, index) => {
-          ctx.fillText(line, infoX, chipY + 56 + index * 26);
-        });
-      }
-
-      if (config.customBadgeText) {
-        drawBadge(ctx, CARD_WIDTH - 320, infoY - 24, 'Rol', config.customBadgeText, config.accent);
-      }
-
       const vouches = profile?.vouches ?? 0;
-      drawVouchPanel(
-        ctx,
-        config.vouchPanel,
-        vouches,
-        ratingValue,
-        ratingCount,
-        CARD_WIDTH - 320,
-        infoY + 52,
-        240,
-      );
+      const animatedBackground = await this.resolveAnimatedBackground(config, options.discordBannerUrl ?? null);
 
-      if (config.watermark) {
-        drawWatermark(ctx, config.watermark);
+      const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
+        ctx.textBaseline = 'top';
+        await drawBackgroundLayer(
+          ctx,
+          config,
+          this.imageCache,
+          animatedBackground?.isBanner ? null : options.discordBannerUrl ?? null,
+          frameImage && animatedBackground
+            ? {
+                frameImage,
+                backgroundOverride: animatedBackground.background,
+                isBanner: animatedBackground.isBanner,
+              }
+            : undefined,
+        );
+
+        if (config.sideMedia) {
+          await drawSideMedia(ctx, config.sideMedia, this.imageCache);
+        }
+
+        const borderColor = addAlphaToHex(config.border.color, config.border.opacity);
+        drawRoundedRect(
+          ctx,
+          48,
+          80,
+          CARD_WIDTH - 96,
+          CARD_HEIGHT - 136,
+          config.frameStyle === 'cut' ? 12 : 34,
+          addAlphaToHex('#070916', 0.76),
+          borderColor,
+          config.border.width,
+          config.border.glow ? { color: addAlphaToHex(config.border.color, 0.35), blur: 24 } : undefined,
+        );
+
+        drawAvatar(ctx, avatarSource, avatarX, avatarY, AVATAR_SIZE, {
+          borderColor: addAlphaToHex('#FFFFFF', 0.65),
+          borderWidth: 4,
+        });
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 52px "Segoe UI", sans-serif';
+        ctx.fillText(baseName.slice(0, 42), infoX, infoY);
+
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
+        ctx.font = '500 22px "Segoe UI", sans-serif';
+        ctx.fillText(options.discordTag, infoX, infoY + 60);
+
+        drawAvatar(
+          ctx,
+          robloxAvatar ?? createAvatarFallback(resolveInitials(robloxUsername), ROBLOX_AVATAR_SIZE),
+          robloxCircleX,
+          robloxCircleY,
+          ROBLOX_AVATAR_SIZE,
+          {
+            borderColor: addAlphaToHex(config.accent, 0.75),
+            borderWidth: 4,
+          },
+        );
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 34px "Segoe UI", sans-serif';
+        ctx.fillText(`Roblox · ${robloxUsername}`, robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 12);
+
+        if (profile?.primaryIdentity?.verified) {
+          ctx.fillStyle = addAlphaToHex('#3ED598', 0.92);
+          ctx.font = '600 18px "Segoe UI", sans-serif';
+          ctx.fillText('Verificado', robloxCircleX + ROBLOX_AVATAR_SIZE + 24, robloxCircleY + 60);
+        }
+
+        drawRatingStars(ctx, ratingValue, starsX, starsY, 96, config.accent, config.starStyle);
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.82);
+        ctx.font = '600 22px "Segoe UI", sans-serif';
+        ctx.fillText(ratingLabel, starsX + 360, starsY + 12);
+
+        chipX = infoX;
+        if (config.chips.length > 0) {
+          for (const chip of config.chips) {
+            const width = drawChip(ctx, chip.label, chip.accent ?? config.accent, chipX, chipY);
+            chipX += width;
+          }
+        }
+
+        if (highlightText) {
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.7);
+          ctx.font = '500 20px "Segoe UI", sans-serif';
+          const lines = wrapText(ctx, highlightText, infoWidth);
+          lines.forEach((line, index) => {
+            ctx.fillText(line, infoX, chipY + 56 + index * 26);
+          });
+        }
+
+        if (config.customBadgeText) {
+          drawBadge(ctx, CARD_WIDTH - 320, infoY - 24, 'Rol', config.customBadgeText, config.accent);
+        }
+
+        drawVouchPanel(
+          ctx,
+          config.vouchPanel,
+          vouches,
+          ratingValue,
+          ratingCount,
+          CARD_WIDTH - 320,
+          infoY + 52,
+          240,
+        );
+
+        if (config.watermark) {
+          drawWatermark(ctx, config.watermark);
+        }
+      };
+
+      if (animatedBackground) {
+        const buffer = await this.renderAnimatedCard({
+          frames: animatedBackground.frames,
+          width: Math.round(CARD_WIDTH * scale),
+          height: Math.round(CARD_HEIGHT * scale),
+          scale,
+          draw: drawFrame,
+        });
+        this.storeInCache(gifCacheKey, buffer);
+        return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.gif' });
       }
+
+      const canvas = createCanvas(Math.round(CARD_WIDTH * scale), Math.round(CARD_HEIGHT * scale));
+      const ctx = canvas.getContext('2d');
+      ctx.scale(scale, scale);
+      await drawFrame(ctx, null);
 
       const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(cacheKey, buffer);
+      this.storeInCache(pngCacheKey, buffer);
       return new AttachmentBuilder(buffer, { name: 'middleman-profile-card.png' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de perfil del middleman.');
@@ -936,94 +1182,149 @@ class MiddlemanCardGenerator {
   public async renderTradeSummaryCard(
     options: TradeSummaryCardOptions,
   ): Promise<AttachmentBuilder | null> {
-    const cacheKey = createCacheKey('trade-summary', options);
-    const cached = this.getFromCache(cacheKey, 'middleman-trade-card.png');
-    if (cached) {
-      return cached;
+    const baseCacheKey = createCacheKey('trade-summary', options);
+    const gifCacheKey = `${baseCacheKey}:gif`;
+    const pngCacheKey = `${baseCacheKey}:png`;
+
+    const cachedGif = this.getFromCache(gifCacheKey, 'middleman-trade-card.gif');
+    if (cachedGif) {
+      return cachedGif;
+    }
+
+    const cachedPng = this.getFromCache(pngCacheKey, 'middleman-trade-card.png');
+    if (cachedPng) {
+      return cachedPng;
     }
 
     try {
-      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
-      const ctx = canvas.getContext('2d');
-      ctx.textBaseline = 'top';
+      const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
+      const animatedBackground = await this.resolveAnimatedBackground(config, null);
 
-      await drawBackgroundLayer(ctx, DEFAULT_MIDDLEMAN_CARD_CONFIG, this.imageCache);
-      drawRoundedRect(ctx, 48, 88, CARD_WIDTH - 96, CARD_HEIGHT - 160, 28, addAlphaToHex('#060815', 0.85), addAlphaToHex('#FFFFFF', 0.08));
+      const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
+        ctx.textBaseline = 'top';
+        await drawBackgroundLayer(
+          ctx,
+          config,
+          this.imageCache,
+          undefined,
+          frameImage && animatedBackground
+            ? {
+                frameImage,
+                backgroundOverride: animatedBackground.background,
+                isBanner: animatedBackground.isBanner,
+              }
+            : undefined,
+        );
 
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 46px "Segoe UI", sans-serif';
-      ctx.fillText(`Ticket #${options.ticketCode}`, 82, 120);
-
-      ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
-      ctx.font = '500 22px "Segoe UI", sans-serif';
-      ctx.fillText(`Middleman asignado: ${options.middlemanTag}`, 82, 176);
-
-      ctx.fillStyle = DEFAULT_MIDDLEMAN_CARD_CONFIG.accent;
-      ctx.font = '600 20px "Segoe UI", sans-serif';
-      ctx.fillText(`Estado: ${options.status}`, 82, 210);
-
-      const participantWidth = 340;
-      const participantHeight = 156;
-      options.participants.slice(0, 3).forEach((participant, index) => {
-        const baseX = 82 + index * (participantWidth + 24);
-        const baseY = 252;
         drawRoundedRect(
           ctx,
-          baseX,
-          baseY,
-          participantWidth,
-          participantHeight,
-          24,
-          addAlphaToHex('#0B0D1A', 0.86),
-          addAlphaToHex('#FFFFFF', 0.12),
+          48,
+          88,
+          CARD_WIDTH - 96,
+          CARD_HEIGHT - 160,
+          28,
+          addAlphaToHex('#060815', 0.85),
+          addAlphaToHex('#FFFFFF', 0.08),
         );
 
         ctx.fillStyle = '#ffffff';
-        ctx.font = '600 24px "Segoe UI", sans-serif';
-        ctx.fillText(participant.label, baseX + 26, baseY + 24);
+        ctx.font = '700 46px "Segoe UI", sans-serif';
+        ctx.fillText(`Ticket #${options.ticketCode}`, 82, 120);
 
-        if (participant.roblox) {
-          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
-          ctx.font = '500 18px "Segoe UI", sans-serif';
-          ctx.fillText(`Roblox · ${participant.roblox}`, baseX + 26, baseY + 58);
-        }
+        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+        ctx.font = '500 22px "Segoe UI", sans-serif';
+        ctx.fillText(`Middleman asignado: ${options.middlemanTag}`, 82, 176);
 
-        const statusPalette: Record<TradeParticipantCardInfo['status'], string> = {
-          pending: '#F6AD55',
-          confirmed: '#38BDF8',
-          delivered: '#34D399',
-        };
-        drawBadge(ctx, baseX + 26, baseY + 84, 'Estado', participant.status.toUpperCase(), statusPalette[participant.status]);
+        ctx.fillStyle = config.accent;
+        ctx.font = '600 20px "Segoe UI", sans-serif';
+        ctx.fillText(`Estado: ${options.status}`, 82, 210);
 
-        if (participant.items && participant.items.length > 0) {
-          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.6);
-          ctx.font = '400 16px "Segoe UI", sans-serif';
-          const items = participant.items.slice(0, 3).map((item) => `• ${item}`);
-          ctx.fillText(items.join('  '), baseX + 26, baseY + participantHeight - 32);
-        }
-      });
+        const participantWidth = 340;
+        const participantHeight = 156;
+        options.participants.slice(0, 3).forEach((participant, index) => {
+          const baseX = 82 + index * (participantWidth + 24);
+          const baseY = 252;
+          drawRoundedRect(
+            ctx,
+            baseX,
+            baseY,
+            participantWidth,
+            participantHeight,
+            24,
+            addAlphaToHex('#0B0D1A', 0.86),
+            addAlphaToHex('#FFFFFF', 0.12),
+          );
 
-      if (options.notes) {
-        drawRoundedRect(
-          ctx,
-          82,
-          CARD_HEIGHT - 140,
-          CARD_WIDTH - 164,
-          96,
-          20,
-          addAlphaToHex('#0B0D1A', 0.82),
-          addAlphaToHex('#FFFFFF', 0.12),
-        );
-        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
-        ctx.font = '500 20px "Segoe UI", sans-serif';
-        const lines = wrapText(ctx, options.notes, CARD_WIDTH - 204);
-        lines.slice(0, 3).forEach((line, index) => {
-          ctx.fillText(line, 110, CARD_HEIGHT - 120 + index * 26);
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '600 24px "Segoe UI", sans-serif';
+          ctx.fillText(participant.label, baseX + 26, baseY + 24);
+
+          if (participant.roblox) {
+            ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+            ctx.font = '500 18px "Segoe UI", sans-serif';
+            ctx.fillText(`Roblox · ${participant.roblox}`, baseX + 26, baseY + 58);
+          }
+
+          const statusPalette: Record<TradeParticipantCardInfo['status'], string> = {
+            pending: '#F6AD55',
+            confirmed: '#38BDF8',
+            delivered: '#34D399',
+          };
+          drawBadge(
+            ctx,
+            baseX + 26,
+            baseY + 84,
+            'Estado',
+            participant.status.toUpperCase(),
+            statusPalette[participant.status],
+          );
+
+          if (participant.items && participant.items.length > 0) {
+            ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.6);
+            ctx.font = '400 16px "Segoe UI", sans-serif';
+            const items = participant.items.slice(0, 3).map((item) => `• ${item}`);
+            ctx.fillText(items.join('  '), baseX + 26, baseY + participantHeight - 32);
+          }
         });
+
+        if (options.notes) {
+          drawRoundedRect(
+            ctx,
+            82,
+            CARD_HEIGHT - 140,
+            CARD_WIDTH - 164,
+            96,
+            20,
+            addAlphaToHex('#0B0D1A', 0.82),
+            addAlphaToHex('#FFFFFF', 0.12),
+          );
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.76);
+          ctx.font = '500 20px "Segoe UI", sans-serif';
+          const lines = wrapText(ctx, options.notes, CARD_WIDTH - 204);
+          lines.slice(0, 3).forEach((line, index) => {
+            ctx.fillText(line, 110, CARD_HEIGHT - 120 + index * 26);
+          });
+        }
+      };
+
+      if (animatedBackground) {
+        const buffer = await this.renderAnimatedCard({
+          frames: animatedBackground.frames,
+          width: CARD_WIDTH,
+          height: CARD_HEIGHT,
+          scale: 1,
+          draw: drawFrame,
+        });
+        this.storeInCache(gifCacheKey, buffer);
+        return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.gif' });
       }
 
+      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+      const ctx = canvas.getContext('2d');
+      await drawFrame(ctx, null);
+
       const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(cacheKey, buffer);
+      this.storeInCache(pngCacheKey, buffer);
       return new AttachmentBuilder(buffer, { name: 'middleman-trade-card.png' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de resumen de trade.');
@@ -1032,59 +1333,107 @@ class MiddlemanCardGenerator {
   }
 
   public async renderStatsCard(options: StatsCardOptions): Promise<AttachmentBuilder | null> {
-    const cacheKey = createCacheKey('stats-card', options);
-    const cached = this.getFromCache(cacheKey, 'dedos-stats-card.png');
-    if (cached) {
-      return cached;
+    const baseCacheKey = createCacheKey('stats-card', options);
+    const gifCacheKey = `${baseCacheKey}:gif`;
+    const pngCacheKey = `${baseCacheKey}:png`;
+
+    const cachedGif = this.getFromCache(gifCacheKey, 'dedos-stats-card.gif');
+    if (cachedGif) {
+      return cachedGif;
+    }
+
+    const cachedPng = this.getFromCache(pngCacheKey, 'dedos-stats-card.png');
+    if (cachedPng) {
+      return cachedPng;
     }
 
     try {
-      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
-      const ctx = canvas.getContext('2d');
-      ctx.textBaseline = 'top';
+      const config = DEFAULT_MIDDLEMAN_CARD_CONFIG;
+      const animatedBackground = await this.resolveAnimatedBackground(config, null);
 
-      await drawBackgroundLayer(ctx, DEFAULT_MIDDLEMAN_CARD_CONFIG, this.imageCache);
-      drawRoundedRect(ctx, 64, 96, CARD_WIDTH - 128, CARD_HEIGHT - 176, 28, addAlphaToHex('#060815', 0.85), addAlphaToHex('#FFFFFF', 0.08));
-
-      ctx.fillStyle = '#ffffff';
-      ctx.font = '700 44px "Segoe UI", sans-serif';
-      ctx.fillText(options.title, 96, 128);
-
-      if (options.subtitle) {
-        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
-        ctx.font = '500 22px "Segoe UI", sans-serif';
-        ctx.fillText(options.subtitle, 96, 180);
-      }
-
-      const columnWidth = (CARD_WIDTH - 256) / 3;
-      options.metrics.slice(0, 6).forEach((metric, index) => {
-        const column = index % 3;
-        const row = Math.floor(index / 3);
-        const x = 96 + column * (columnWidth + 32);
-        const y = 232 + row * 120;
+      const drawFrame = async (ctx: SKRSContext2D, frameImage: CanvasImageSource | null): Promise<void> => {
+        ctx.textBaseline = 'top';
+        await drawBackgroundLayer(
+          ctx,
+          config,
+          this.imageCache,
+          undefined,
+          frameImage && animatedBackground
+            ? {
+                frameImage,
+                backgroundOverride: animatedBackground.background,
+                isBanner: animatedBackground.isBanner,
+              }
+            : undefined,
+        );
 
         drawRoundedRect(
           ctx,
-          x,
-          y,
-          columnWidth,
+          64,
           96,
-          20,
-          addAlphaToHex('#0B0D1A', 0.82),
+          CARD_WIDTH - 128,
+          CARD_HEIGHT - 176,
+          28,
+          addAlphaToHex('#060815', 0.85),
           addAlphaToHex('#FFFFFF', 0.08),
         );
 
-        ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.65);
-        ctx.font = '600 18px "Segoe UI", sans-serif';
-        ctx.fillText(metric.label.toUpperCase(), x + 24, y + 18);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '700 44px "Segoe UI", sans-serif';
+        ctx.fillText(options.title, 96, 128);
 
-        ctx.fillStyle = metric.emphasis ? '#ffffff' : addAlphaToHex('#FFFFFF', 0.86);
-        ctx.font = metric.emphasis ? '800 30px "Segoe UI", sans-serif' : '600 24px "Segoe UI", sans-serif';
-        ctx.fillText(metric.value, x + 24, y + 52);
-      });
+        if (options.subtitle) {
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.72);
+          ctx.font = '500 22px "Segoe UI", sans-serif';
+          ctx.fillText(options.subtitle, 96, 180);
+        }
+
+        const columnWidth = (CARD_WIDTH - 256) / 3;
+        options.metrics.slice(0, 6).forEach((metric, index) => {
+          const column = index % 3;
+          const row = Math.floor(index / 3);
+          const x = 96 + column * (columnWidth + 32);
+          const y = 232 + row * 120;
+
+          drawRoundedRect(
+            ctx,
+            x,
+            y,
+            columnWidth,
+            96,
+            20,
+            addAlphaToHex('#0B0D1A', 0.82),
+            addAlphaToHex('#FFFFFF', 0.08),
+          );
+
+          ctx.fillStyle = addAlphaToHex('#FFFFFF', 0.65);
+          ctx.font = '600 18px "Segoe UI", sans-serif';
+          ctx.fillText(metric.label.toUpperCase(), x + 24, y + 18);
+
+          ctx.fillStyle = metric.emphasis ? '#ffffff' : addAlphaToHex('#FFFFFF', 0.86);
+          ctx.font = metric.emphasis ? '800 30px "Segoe UI", sans-serif' : '600 24px "Segoe UI", sans-serif';
+          ctx.fillText(metric.value, x + 24, y + 52);
+        });
+      };
+
+      if (animatedBackground) {
+        const buffer = await this.renderAnimatedCard({
+          frames: animatedBackground.frames,
+          width: CARD_WIDTH,
+          height: CARD_HEIGHT,
+          scale: 1,
+          draw: drawFrame,
+        });
+        this.storeInCache(gifCacheKey, buffer);
+        return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.gif' });
+      }
+
+      const canvas = createCanvas(CARD_WIDTH, CARD_HEIGHT);
+      const ctx = canvas.getContext('2d');
+      await drawFrame(ctx, null);
 
       const buffer = canvas.toBuffer('image/png');
-      this.storeInCache(cacheKey, buffer);
+      this.storeInCache(pngCacheKey, buffer);
       return new AttachmentBuilder(buffer, { name: 'dedos-stats-card.png' });
     } catch (error) {
       logger.warn({ err: error }, 'No se pudo generar la tarjeta de estadísticas.');
