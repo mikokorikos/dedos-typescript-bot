@@ -53,6 +53,7 @@
     "discord.js": "^14.16.3",
     "dotenv": "^16.4.5",
     "gifencoder": "^2.0.1",
+    "gifuct-js": "^2.1.2",
     "mysql2": "^3.15.1",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0",
