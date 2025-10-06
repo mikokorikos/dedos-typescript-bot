@@ -13,6 +13,7 @@ import { Rating } from '@/domain/value-objects/Rating';
 import { middlemanCardGenerator } from '@/infrastructure/external/MiddlemanCardGenerator';
 import type { EmbedFactory } from '@/presentation/embeds/EmbedFactory';
 import { embedFactory } from '@/presentation/embeds/EmbedFactory';
+import { resolveUserBannerUrl } from '@/shared/discord/resolveUserBannerUrl';
 import {
   DuplicateReviewError,
   TicketNotFoundError,
@@ -117,12 +118,7 @@ export class SubmitReviewUseCase {
     ) {
       middlemanUser = await middlemanUser.fetch().catch(() => middlemanUser);
     }
-    const middlemanBannerUrl =
-      middlemanUser && typeof middlemanUser.bannerURL === 'function'
-        ? middlemanUser.bannerURL({ size: 2048, forceStatic: false, extension: 'gif' }) ??
-          middlemanUser.bannerURL({ size: 2048, forceStatic: false }) ??
-          undefined
-        : undefined;
+    const middlemanBannerUrl = resolveUserBannerUrl(middlemanUser) ?? undefined;
 
 
     const cardAttachment = await middlemanCardGenerator.renderProfileCard({

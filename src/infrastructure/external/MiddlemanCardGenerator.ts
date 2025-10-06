@@ -462,7 +462,7 @@ const fetchImageBuffer = async (url: string): Promise<Buffer> => {
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'Mozilla/5.0 (compatible; DedosShopBot/1.0; +https://dedos.xyz)',
-      Accept: 'image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5',
+      Accept: 'image/gif,image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5',
     },
   });
 
